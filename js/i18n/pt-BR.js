@@ -10,6 +10,12 @@
  */
 window.I18N_DICTS = window.I18N_DICTS || {};
 window.I18N_DICTS['pt-BR'] = {
+  // Campañas — volver a enrolar (2026-11-25)
+  "Todos los leads de la lista ya están en esta campaña y siguen en curso, respondieron o se dieron de baja.": "Todos os leads da lista já estão nesta campanha e seguem em andamento, responderam ou cancelaram a inscrição.",
+  "Volver a enrolar": "Inscrever novamente",
+  "Su cadencia en esta campaña terminó sin respuesta. Al enrolarlo vuelve a empezar desde el primer paso.": "A cadência dele nesta campanha terminou sem resposta. Ao inscrevê-lo, ela recomeça do primeiro passo.",
+  "{0} lead ya pasó por esta campaña y terminó sin responder (completados, detenidos o con error): si los enrolas, la cadencia vuelve a empezar desde el primer paso. Los mensajes IA que ya les llegaron no se repiten.": "{0} lead já passou por esta campanha e terminou sem responder (concluídos, interrompidos ou com erro): se você inscrevê-lo, a cadência recomeça do primeiro passo. As mensagens de IA que já recebeu não se repetem.",
+  "{0} leads ya pasaron por esta campaña y terminaron sin responder (completados, detenidos o con error): si los enrolas, la cadencia vuelve a empezar desde el primer paso. Los mensajes IA que ya les llegaron no se repiten.": "{0} leads já passaram por esta campanha e terminaram sem responder (concluídos, interrompidos ou com erro): se você inscrevê-los, a cadência recomeça do primeiro passo. As mensagens de IA que já receberam não se repetem.",
   // Prospección — desplegables de Industrias y Cargos (2026-11-24)
   "Busca o escribe cargos, separados por coma": "Busque ou digite cargos, separados por vírgula",
   "Elige de la lista o escribe varios separados por coma: se buscan todos.": "Escolha da lista ou digite vários separados por vírgula: todos são buscados.",

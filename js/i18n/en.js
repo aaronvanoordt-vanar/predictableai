@@ -8,6 +8,12 @@
  */
 window.I18N_DICTS = window.I18N_DICTS || {};
 window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
+  // Campañas — volver a enrolar (2026-11-25)
+  "Todos los leads de la lista ya están en esta campaña y siguen en curso, respondieron o se dieron de baja.": "All leads in the list are already in this campaign and are still in progress, replied or unsubscribed.",
+  "Volver a enrolar": "Re-enroll",
+  "Su cadencia en esta campaña terminó sin respuesta. Al enrolarlo vuelve a empezar desde el primer paso.": "Their cadence in this campaign ended without a reply. Enrolling them starts again from the first step.",
+  "{0} lead ya pasó por esta campaña y terminó sin responder (completados, detenidos o con error): si los enrolas, la cadencia vuelve a empezar desde el primer paso. Los mensajes IA que ya les llegaron no se repiten.": "{0} lead already went through this campaign and finished without replying (completed, stopped or with an error): if you enroll them, the cadence starts again from the first step. AI messages they already received are not repeated.",
+  "{0} leads ya pasaron por esta campaña y terminaron sin responder (completados, detenidos o con error): si los enrolas, la cadencia vuelve a empezar desde el primer paso. Los mensajes IA que ya les llegaron no se repiten.": "{0} leads already went through this campaign and finished without replying (completed, stopped or with an error): if you enroll them, the cadence starts again from the first step. AI messages they already received are not repeated.",
   // Prospección — desplegables de Industrias y Cargos (2026-11-24)
   "Busca o escribe cargos, separados por coma": "Search or type job titles, separated by commas",
   "Elige de la lista o escribe varios separados por coma: se buscan todos.": "Pick from the list or type several separated by commas: all of them are searched.",
