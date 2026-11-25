@@ -58,6 +58,22 @@ Precios tomados de las páginas de precios y de directorios el 2026-10-17 (las p
 - UI: asistente «Conectar mi cuenta de LinkedIn» (aviso + casilla, ventana emergente, `unipile-callback.html`), detalle con topes, «Cómo sale» en cada paso del builder, «Enviar por LinkedIn» en la Bandeja.
 - Migración `20261018180007_linkedin_unipile.sql`.
 
+## Varias cuentas por usuario y pruebas A/B (2026-11-25)
+
+Pedido del dueño: conectar más de una cuenta de LinkedIn para hacer pruebas A/B entre cuentas.
+
+- **Modelo**: cada cuenta es una fila de `channel_accounts` con `provider = 'unipile'`. La migración `20261125200000_linkedin_multi_account.sql` quita la restricción única usuario+proveedor y la reemplaza por un índice parcial para los demás proveedores. Tope de 5 cuentas por usuario (`LINKEDIN_MAX_ACCOUNTS`, secret opcional): la plataforma paga cada cuenta al proveedor.
+- **Qué cuenta envía** (`_shared/linkedin-accounts.ts`, `pickSender`):
+  1. la que ya contactó al lead (`campaign_enrollments.provider_refs.unipile_account_id`): la conexión y el chat son de esa cuenta, así que un lead no cambia de cuenta a mitad de la cadencia;
+  2. en el primer contacto, una de las cuentas elegidas en la campaña (`campaigns.sender.linkedin_account_ids`), al azar en partes iguales, con un hash estable del enrolamiento;
+  3. sin elegir, la cuenta principal (la más antigua).
+  Si la cuenta de un lead se desconectó, se reasigna entre las de la campaña y se descarta el chat anterior.
+- **Prueba A/B**: dos formas. (a) Una campaña con dos cuentas marcadas: mismos leads, mismo mensaje, reparto al azar; se compara en el detalle de la campaña con el filtro «Cuenta de LinkedIn» de Analytics. (b) Dos campañas, cada una con una cuenta.
+- **Por cuenta**: topes diarios y semanales, rampa, `send_block`, calentamiento (Warm Up muestra una tarjeta por cuenta) y sincronización de aceptaciones. Los eventos y mensajes guardan `payload.account_id`; lo anterior a este cambio se atribuye a la cuenta principal.
+- **Bandeja**: la respuesta sale de la cuenta que lleva la conversación. **Invitación a mano desde Listas**: sale de la cuenta principal (`inbox-send` acepta `account_id`, la interfaz todavía no lo ofrece).
+- **Despliegue**: primero las funciones (`channel-connect`, `unipile-webhook`, `campaign-run`, `inbox-send`, `channel-guard`), después la migración. El `channel-connect` anterior guardaba con `ON CONFLICT (user_id, provider)`, que deja de existir con la migración.
+- **Pendiente**: varias cuentas de WhatsApp y de Llamadas (Email ya admite varios buzones por campaña).
+
 ## Lo que se verifica al desplegar (no se pudo localmente)
 
 - Las rutas y los nombres de campo de Unipile salen de su documentación v1 (la página no se pudo abrir desde la sesión): confirmar con una cuenta real el aviso del link embebido (`status`, `account_id`, `name`), el `network_distance` de `GET /users/{id}` y el formato de `message_received` / `new_relation`. Si un campo difiere, se cambia solo en `_shared/unipile.ts` y su test.

@@ -107,6 +107,7 @@ import { isWebmAudio, WebmOpusError, webmOpusToOgg } from "../_shared/webm-opus.
 import { syncWatiHistory } from "../_shared/wati-history.ts";
 import * as apolloAuth from "../_shared/apollo-auth.ts";
 import * as unipile from "../_shared/unipile.ts";
+import * as liAccounts from "../_shared/linkedin-accounts.ts";
 import * as liLimits from "../_shared/linkedin-limits.ts";
 import { activeBlock } from "../_shared/linkedin-limits.ts";
 import * as suppression from "../_shared/suppression.ts";
@@ -927,7 +928,7 @@ Deno.serve(async (req) => {
       return json({ updated: data?.length ?? 0 }, 200, cors);
     }
 
-    if (body?.action === "linkedin_invite") return json(await sendLinkedinInvite(db, user.id, String(body.member_id ?? "")), 200, cors);
+    if (body?.action === "linkedin_invite") return json(await sendLinkedinInvite(db, user.id, String(body.member_id ?? ""), UUID_RE.test(String(body.account_id ?? "")) ? String(body.account_id) : ""), 200, cors);
 
     if (body?.action === "react") return json({ message: await sendReaction(db, user.id, String(body.id ?? ""), body.emoji) }, 200, cors);
 
@@ -1031,11 +1032,12 @@ Deno.serve(async (req) => {
 async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string, contactRef: string, text: string, out: unipile.OutFile | null = null): Promise<Json | null> {
   const env = unipile.unipileEnv();
   if (!env) return null;
-  const { data: acc } = await db.from("channel_accounts").select("id, secret, status, config").eq("user_id", userId).eq("provider", "unipile").maybeSingle();
-  if (!acc?.secret || acc.status === "disconnected") return null;
+  // Un usuario puede tener varias cuentas de LinkedIn: la respuesta sale de la
+  // que lleva la conversación (más abajo); sin ninguna conectada, null.
+  const rows = await liAccounts.loadAccounts(db, userId);
+  const fallback = liAccounts.defaultAccount(rows);
+  if (!fallback) return null;
   if (!text && !out) throw new HttpError("Escribe un mensaje.", 400);
-  const block = activeBlock(acc.config);
-  if (block) throw new HttpError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn en Campañas."), 409, "linkedin_blocked");
   if (memberId && !UUID_RE.test(memberId)) throw new HttpError("member_id inválido", 400);
   let member: Json | null = null;
   if (memberId) {
@@ -1045,18 +1047,28 @@ async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string
   }
   const profileUrl = canonicalLinkedinUrl(member?.linkedin_url) || canonicalLinkedinUrl(contactRef) || "";
   // El chat ya abierto con este contacto (de la bandeja o del enrolamiento).
-  let q = db.from("inbox_messages").select("provider_conversation_id, campaign_id, enrollment_id")
+  let q = db.from("inbox_messages").select("provider_conversation_id, campaign_id, enrollment_id, payload")
     .eq("user_id", userId).eq("channel", "linkedin").eq("provider", "unipile").not("provider_conversation_id", "is", null)
     .order("sent_at", { ascending: false }).limit(1);
   q = member ? q.eq("member_id", member.id) : q.eq("contact_ref", contactRef);
   const { data: lastRow } = await q.maybeSingle();
-  let chatId: string | null = lastRow?.provider_conversation_id ?? null;
   let enrollment: Json | null = null;
   if (member) {
     const { data } = await db.from("campaign_enrollments").select("id, campaign_id, provider_refs").eq("user_id", userId).eq("member_id", member.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
     enrollment = data ?? null;
-    if (!chatId && enrollment?.provider_refs?.unipile_chat_id) chatId = String(enrollment.provider_refs.unipile_chat_id);
   }
+  // La cuenta de la conversación: la del último mensaje del chat; si no hay,
+  // la que contactó al lead en su campaña; si esa ya no está, la principal
+  // (y entonces el chat anterior no sirve: era de la otra cuenta).
+  const usable = rows.filter(liAccounts.isUsable);
+  const ownerOf = (accountId: unknown) => usable.find((a) => liAccounts.belongsTo(accountId, a, rows)) ?? null;
+  const chatOwner = lastRow ? ownerOf(lastRow.payload?.account_id) : null;
+  const enOwner = enrollment?.provider_refs?.unipile_provider_id ? ownerOf(enrollment.provider_refs.unipile_account_id) : null;
+  const acc: Json = chatOwner ?? enOwner ?? fallback;
+  let chatId: string | null = chatOwner && chatOwner.id === acc.id ? lastRow?.provider_conversation_id ?? null : null;
+  if (!chatId && enOwner && enOwner.id === acc.id && enrollment?.provider_refs?.unipile_chat_id) chatId = String(enrollment.provider_refs.unipile_chat_id);
+  const block = activeBlock(acc.config);
+  if (block) throw new HttpError(block.reason + (block.until ? "" : " Vuelve a conectar tu cuenta de LinkedIn en Canales → LinkedIn."), 409, "linkedin_blocked");
   let messageId: string | null = null;
   try {
     if (chatId) {
@@ -1080,7 +1092,7 @@ async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string
     contact_ref: (member ? profileUrl || contactRef : contactRef || profileUrl) || null, body: text || (out ? linkedinFileLabel(out) : ""), provider_message_id: messageId, provider_conversation_id: chatId,
     status: "sent", sent_at: new Date().toISOString(),
     campaign_id: lastRow?.campaign_id ?? enrollment?.campaign_id ?? null, enrollment_id: lastRow?.enrollment_id ?? enrollment?.id ?? null,
-    payload: { source: "inbox", chat_id: chatId, ...(out ? { type: linkedinFileKind(out), media: true, file_name: out.file.name || null, voice: !!out.voice } : {}) },
+    payload: { source: "inbox", chat_id: chatId, account_id: acc.id, ...(out ? { type: linkedinFileKind(out), media: true, file_name: out.file.name || null, voice: !!out.voice } : {}) },
   }).select("*").single();
   if (error) throw new HttpError(error.message, 500);
   return row;
@@ -1093,13 +1105,19 @@ async function sendLinkedin(db: SupabaseClient, userId: string, memberId: string
  * decisión del dueño 2026-11-09). Mismos topes diarios y semanales que el motor; el
  * espaciado de 2–8 min no aplica porque la manda una persona con un clic.
  */
-async function sendLinkedinInvite(db: SupabaseClient, userId: string, memberId: string): Promise<Json> {
+async function sendLinkedinInvite(db: SupabaseClient, userId: string, memberId: string, accountId = ""): Promise<Json> {
   if (!UUID_RE.test(memberId)) throw new HttpError("member_id inválido", 400);
   const env = unipile.unipileEnv();
   if (!env) throw new HttpError("El envío desde tu cuenta de LinkedIn no está habilitado en la plataforma.", 428, "linkedin_not_configured");
-  const { data: acc } = await db.from("channel_accounts").select("id, secret, status, config").eq("user_id", userId).eq("provider", "unipile").maybeSingle();
-  if (!acc?.secret || acc.status === "disconnected") {
-    throw new HttpError("Conecta tu cuenta de LinkedIn en Canales → LinkedIn para enviar invitaciones desde Predictable.", 428, "linkedin_account_required");
+  // Con varias cuentas de LinkedIn: la que elige el usuario; sin elegir, la principal.
+  const rows = await liAccounts.loadAccounts(db, userId);
+  const acc: Json | null = accountId
+    ? rows.find((r) => String(r.id) === accountId && liAccounts.isUsable(r)) ?? null
+    : liAccounts.defaultAccount(rows);
+  if (!acc) {
+    throw new HttpError(accountId && liAccounts.defaultAccount(rows)
+      ? "Esa cuenta de LinkedIn ya no está conectada. Elige otra o vuelve a conectarla en Canales → LinkedIn."
+      : "Conecta tu cuenta de LinkedIn en Canales → LinkedIn para enviar invitaciones desde Predictable.", 428, "linkedin_account_required");
   }
   const now = new Date();
   const block = activeBlock(acc.config, now);
@@ -1115,12 +1133,8 @@ async function sendLinkedinInvite(db: SupabaseClient, userId: string, memberId: 
   if (sup.error) throw new HttpError("No pudimos revisar tu lista «No contactar». Intenta de nuevo en unos minutos.", 503, "suppression_unavailable");
   if (sup.suppressed) throw new HttpError(sup.reason || "Este lead está en tu lista «No contactar» para LinkedIn.", 409, "suppressed");
   // Topes de la cuenta (los mismos eventos que cuenta campaign-run).
-  const day = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const week = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const base = () => db.from("campaign_events").select("id", { count: "exact", head: true })
-    .eq("user_id", userId).eq("channel", "linkedin").eq("type", "connection_sent").eq("payload->>via", "unipile");
-  const [d, w] = await Promise.all([base().gte("created_at", day), base().gte("created_at", week)]);
-  const counts: liLimits.SendCounts = { invitesDay: d.count ?? 0, invitesWeek: w.count ?? 0, messagesDay: 0, lastSendAt: null };
+  const sent = await liAccounts.sendCounts(db, userId, acc, rows, now);
+  const counts: liLimits.SendCounts = { invitesDay: sent.invitesDay, invitesWeek: sent.invitesWeek, messagesDay: 0, lastSendAt: null };
   const limits = liLimits.effectiveLimits(acc.config, acc.config?.connected_at, now);
   const p = liLimits.pace("invite", counts, limits, now, 0);
   if (!p.ok) throw new HttpError(p.reason, 429, "linkedin_limit");
@@ -1151,7 +1165,7 @@ async function sendLinkedinInvite(db: SupabaseClient, userId: string, memberId: 
   await db.from("campaign_events").insert({
     user_id: userId, member_id: member.id, channel: "linkedin", type: "connection_sent",
     provider_message_id: invitationId, detail: "Solicitud de conexión enviada desde Listas (sin nota).",
-    payload: { via: "unipile", source: "manual", provider_id: profile.providerId },
+    payload: { via: "unipile", source: "manual", provider_id: profile.providerId, account_id: acc.id },
   });
   if (["no_contactado", "en_campana"].includes(member.contact_status)) {
     await db.from("prospect_list_members").update({ contact_status: "conexion_enviada", status_changed_at: at }).eq("id", member.id);

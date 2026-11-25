@@ -93,8 +93,9 @@ import * as whatsapp from "../_shared/whatsapp.ts";
 import * as dripify from "../_shared/dripify.ts";
 import * as apollo from "../_shared/apollo-auth.ts";
 import { contactIdsFromOtherAccount } from "../_shared/apollo-platform.ts";
-import { patchChannelConfig } from "../_shared/channel-config.ts";
+import { patchChannelConfig, saveSingleAccount } from "../_shared/channel-config.ts";
 import * as unipile from "../_shared/unipile.ts";
+import * as liAccounts from "../_shared/linkedin-accounts.ts";
 import { LINKEDIN_LIMIT_CEILINGS, LINKEDIN_LIMITS, normalizeUserLimits } from "../_shared/linkedin-limits.ts";
 
 /** Reconectar Apollo conserva el buzón predeterminado que el usuario eligió, si sigue existiendo. */
@@ -545,15 +546,13 @@ async function metaConnect(db: SupabaseClient, userId: string, payload: Json, co
     // Otro número: lo de antes (bloqueos, fallas de plantilla) era de aquel.
     for (const k of ["send_block", "template_faults", "quality", "templates"]) delete config[k];
   }
-  const { data: row, error } = await db.from("channel_accounts").upsert({
-    user_id: userId,
-    provider: "meta",
+  const { data: row, error } = await saveSingleAccount(db, userId, "meta", {
     config,
     secret: JSON.stringify({ access_token: token, pin }),
     webhook_secret: prev?.webhook_secret || randomSecret(),
     status: problems.length ? "error" : "connected",
     last_error: problems.length ? problems.join(" ").slice(0, 500) : null,
-  }, { onConflict: "user_id,provider" }).select("*").single();
+  });
   if (error) {
     const dup = /channel_accounts_meta_phone_uniq|duplicate key/i.test(error.message);
     return json({ error: dup ? "Ese número de WhatsApp ya está conectado en otra cuenta de Predictable." : "No se pudo guardar la cuenta: " + error.message }, dup ? 409 : 500, cors);
@@ -647,17 +646,33 @@ Deno.serve(async (req) => {
     const { data } = await db.from("channel_accounts").select("user_id").eq("provider", "unipile").eq("secret", accountId).neq("user_id", user.id).limit(1);
     return !!(data && data.length);
   };
+  // Cuentas de LinkedIn propias (2026-11-25: puede haber varias), la principal primero.
+  const linkedinRows = () => liAccounts.loadAccounts(db, user.id);
+  const visibleLinkedin = (rows: Json[]) => rows.filter((r) => r.status !== "disconnected");
+  const linkedinPayload = (rows: Json[]) => ({
+    account: publicRow(visibleLinkedin(rows)[0] ?? rows[0] ?? null),
+    accounts: visibleLinkedin(rows).map(publicRow),
+  });
+  // La fila sobre la que actúa la petición: la que nombra o, si no, la principal.
+  const linkedinTarget = (rows: Json[], id: unknown): Json | null => {
+    const want = clean(id, 60);
+    if (want) return rows.find((r) => String(r.id) === want) ?? null;
+    return visibleLinkedin(rows)[0] ?? rows[0] ?? null;
+  };
 
   try {
     if (action === "status") {
-      const [w, m, d, a, u] = await Promise.all([loadAccount("wati"), loadAccount("meta"), loadAccount("dripify"), loadAccount("apollo"), loadAccount("unipile")]);
+      const [w, m, d, a, li] = await Promise.all([loadAccount("wati"), loadAccount("meta"), loadAccount("dripify"), loadAccount("apollo"), linkedinRows()]);
       return json({
         wati: publicRow(w),
         meta: publicRow(m),
         whatsapp: publicRow(whatsapp.pickWhatsAppAccount([w, m])),
         dripify: publicRow(d),
         apollo: publicRow(a),
-        unipile: publicRow(u),
+        // `unipile` = la cuenta principal (compatibilidad); `unipile_accounts` = todas.
+        unipile: linkedinPayload(li).account,
+        unipile_accounts: linkedinPayload(li).accounts,
+        linkedin_max_accounts: liAccounts.maxAccounts(),
         apollo_oauth_available: apollo.oauthAvailable(),
         linkedin_native_available: !!unipile.unipileEnv() && !!(Deno.env.get("UNIPILE_WEBHOOK_SECRET") ?? "").trim(),
         linkedin_limits: LINKEDIN_LIMITS,
@@ -680,21 +695,42 @@ Deno.serve(async (req) => {
       // Si falla no se bloquea la conexión (la sincronización de cada 15 min
       // cubre las aceptaciones; los mensajes esperan al próximo intento).
       try { await unipile.ensureWebhooks(env, hookUrl, hookSecret); } catch (e) { console.warn("[channel-connect] unipile webhooks:", unipile.humanError(e)); }
-      const prev = await loadAccount("unipile");
+      const rows = await linkedinRows();
+      // `add` = conectar OTRA cuenta; `account_id` = volver a conectar esa; sin
+      // ninguno de los dos, la principal (o la primera, si no hay ninguna).
+      const adding = payload.add === true;
+      const prev = adding ? null : linkedinTarget(rows, payload.account_id);
+      if (!adding && payload.account_id && !prev) return json({ error: "No encontramos esa cuenta de LinkedIn." }, 404, cors);
+      const max = liAccounts.maxAccounts();
+      if (!prev && liAccounts.activeCount(rows) >= max) {
+        return json({ error: "linkedin_account_limit", message: new unipile.LinkedinAccountLimitError(max).message, max }, 409, cors);
+      }
       const state = await unipile.signState(hookSecret, user.id);
       // ¿Ya hay en Unipile una cuenta de LinkedIn de este usuario que funciona
       // (la conectó antes con este mismo link firmado) pero Predictable la
       // tiene desconectada o con otro id? Se adopta sin abrir otro login:
       // pedir un link nuevo en ese caso puede fallar con «No client session»
       // y dejaba al usuario sin poder conectar una cuenta que ya funcionaba.
+      // Nunca al AGREGAR una cuenta (ahí el usuario quiere iniciar sesión con
+      // otro perfil) ni una que ya está guardada en otra de sus filas.
       const prevUsable = !!prev?.secret && prev.status === "connected";
-      if (!prevUsable) {
+      if (!adding && !prevUsable) {
         try {
-          const found = await unipile.findAccountByName(env, state, linkedinIdentity(prev));
+          const { items } = await unipile.listLinkedinAccounts(env);
+          const taken = new Set(rows.filter((r) => r.secret && r.id !== prev?.id).map((r) => String(r.secret)));
+          const free = items.filter((a) => !taken.has(String(a?.id ?? "")));
+          const identity = linkedinIdentity(prev);
+          const found = identity.providerId || identity.publicIdentifier
+            ? unipile.pickAccountByIdentity(free, identity)
+            : unipile.pickAccountByName(free, state);
           if (found && unipile.accountUsable(found.status) && !(await unipileHeldByOther(found.id))) {
-            return json({ account: publicRow(await unipile.saveAccount(db, user.id, found)), adopted: true }, 200, cors);
+            const saved = await unipile.saveAccount(db, user.id, found, new Date(), prev?.id ?? null);
+            return json({ ...linkedinPayload(await linkedinRows()), account: publicRow(saved), adopted: true }, 200, cors);
           }
-        } catch (e) { console.warn("[channel-connect] unipile buscar cuenta existente:", unipile.humanError(e)); }
+        } catch (e) {
+          if (e instanceof unipile.LinkedinAccountLimitError) return json({ error: "linkedin_account_limit", message: e.message, max: e.max }, 409, cors);
+          console.warn("[channel-connect] unipile buscar cuenta existente:", unipile.humanError(e));
+        }
       }
       const linkInput = {
         state,
@@ -730,22 +766,39 @@ Deno.serve(async (req) => {
       const env = unipile.unipileEnv();
       const hookSecret = (Deno.env.get("UNIPILE_WEBHOOK_SECRET") ?? "").trim();
       if (!env || !hookSecret) return json({ error: "linkedin_native_not_configured" }, 503, cors);
-      const prev = await loadAccount("unipile");
-      if (prev?.secret) {
-        const acc = await unipile.getAccount(env, prev.secret);
-        return json({ account: publicRow(await unipile.saveAccount(db, user.id, acc)) }, 200, cors);
+      const rows = await linkedinRows();
+      const now = new Date();
+      // Estado al día de cada cuenta guardada.
+      for (const row of rows) {
+        if (!row.secret || row.status === "disconnected") continue;
+        try { await unipile.saveAccount(db, user.id, await unipile.getAccount(env, row.secret), now, row.id); }
+        catch (e) { console.warn("[channel-connect] unipile refresh:", unipile.humanError(e)); }
       }
-      // El aviso de Unipile todavía no llegó (o no llegó nunca): se busca la
-      // cuenta por el estado firmado del link, que Unipile guarda como nombre.
-      const state = await unipile.signState(hookSecret, user.id);
-      const found = await unipile.findAccountByName(env, state, linkedinIdentity(prev));
-      if (!found || await unipileHeldByOther(found.id)) return json({ account: null }, 200, cors);
-      return json({ account: publicRow(await unipile.saveAccount(db, user.id, found)) }, 200, cors);
+      // El aviso de Unipile todavía no llegó (o no llegó nunca): se buscan las
+      // cuentas con el estado firmado del link, que Unipile guarda como nombre.
+      let limit: string | null = null;
+      try {
+        const state = await unipile.signState(hookSecret, user.id);
+        const { accounts } = await unipile.listLinkedinAccounts(env);
+        const saved = new Set((await linkedinRows()).filter((r) => r.secret).map((r) => String(r.secret)));
+        for (const acc of accounts) {
+          if (saved.has(acc.id) || !unipile.accountUsable(acc.status) || acc.rawName !== state) continue;
+          if (await unipileHeldByOther(acc.id)) continue;
+          try { await unipile.saveAccount(db, user.id, acc, now); }
+          catch (e) {
+            if (!(e instanceof unipile.LinkedinAccountLimitError)) throw e;
+            limit = e.message;
+            // No cabe: se borra en el proveedor para que no quede cobrándose.
+            try { await unipile.deleteAccount(env, acc.id); } catch (de) { console.warn("[channel-connect] unipile delete:", unipile.humanError(de)); }
+          }
+        }
+      } catch (e) { console.warn("[channel-connect] unipile buscar cuentas:", unipile.humanError(e)); }
+      return json({ ...linkedinPayload(await linkedinRows()), ...(limit ? { limit_message: limit } : {}) }, 200, cors);
     }
 
     if (action === "linkedin_limits") {
-      const acc = await loadAccount("unipile");
-      if (!acc) return json({ error: "linkedin_not_connected" }, 428, cors);
+      const acc = linkedinTarget(await linkedinRows(), payload.account_id);
+      if (!acc || acc.status === "disconnected") return json({ error: "linkedin_not_connected" }, 428, cors);
       // Por encima de lo recomendado corre bajo el riesgo del usuario (2026-11-06):
       // hay que aceptarlo explícitamente y queda la fecha en la cuenta.
       const { limits, aboveRecommended, clamped } = normalizeUserLimits(payload);
@@ -754,7 +807,7 @@ Deno.serve(async (req) => {
       }
       const patch: Record<string, unknown> = { limits, limits_risk_accepted_at: aboveRecommended ? new Date().toISOString() : null };
       const config = await patchChannelConfig(db, acc.id, patch);
-      return json({ account: publicRow({ ...acc, config: config ?? { ...acc.config, ...patch } }), limits, clamped }, 200, cors);
+      return json({ ...linkedinPayload(await linkedinRows()), account: publicRow({ ...acc, config: config ?? { ...acc.config, ...patch } }), limits, clamped }, 200, cors);
     }
 
     if (action === "meta_connect") {
@@ -831,20 +884,14 @@ Deno.serve(async (req) => {
         token_expires_at: tokens.expires_at,
         connected_at: new Date().toISOString(),
       };
-      const { data: row, error } = await db
-        .from("channel_accounts")
-        .upsert({
-          user_id: user.id,
-          provider: "apollo",
+      const { data: row, error } = await saveSingleAccount(db, user.id, "apollo", {
           config,
           secret: JSON.stringify(tokens),
           // Apollo no manda webhooks a esta cuenta; la columna es NOT NULL.
           webhook_secret: prev?.webhook_secret || randomSecret(),
           status: "connected",
           last_error: null,
-        }, { onConflict: "user_id,provider" })
-        .select("*")
-        .single();
+        });
       if (error) throw new Error("No se pudo guardar la cuenta: " + error.message);
       if (contactIdsFromOtherAccount(prev?.config, profile.id)) await forgetApolloContacts(db, user.id);
       return json({ apollo: publicRow(row), account: publicRow(row) }, 200, cors);
@@ -891,19 +938,13 @@ Deno.serve(async (req) => {
         ...keepDefaultEmailAccount(prev?.config, emailAccounts),
         connected_at: new Date().toISOString(),
       };
-      const { data: row, error } = await db
-        .from("channel_accounts")
-        .upsert({
-          user_id: user.id,
-          provider: "apollo",
+      const { data: row, error } = await saveSingleAccount(db, user.id, "apollo", {
           config,
           secret: apiKey,
           webhook_secret: prev?.webhook_secret || randomSecret(),
           status: "connected",
           last_error: null,
-        }, { onConflict: "user_id,provider" })
-        .select("*")
-        .single();
+        });
       if (error) throw new Error("No se pudo guardar la cuenta: " + error.message);
       if (contactIdsFromOtherAccount(prev?.config, profile.id)) await forgetApolloContacts(db, user.id);
       return json({ apollo: publicRow(row), account: publicRow(row) }, 200, cors);
@@ -976,19 +1017,13 @@ Deno.serve(async (req) => {
         webhook,
         connected_at: new Date().toISOString(),
       };
-      const { data: row, error } = await db
-        .from("channel_accounts")
-        .upsert({
-          user_id: user.id,
-          provider: "wati",
+      const { data: row, error } = await saveSingleAccount(db, user.id, "wati", {
           config,
           secret: tokenIn,
           webhook_secret: webhookSecret,
           status: "connected",
           last_error: null,
-        }, { onConflict: "user_id,provider" })
-        .select("*")
-        .single();
+        });
       if (error) throw new Error("No se pudo guardar la cuenta: " + error.message);
       return json({ account: publicRow(row) }, 200, cors);
     }
@@ -1144,19 +1179,13 @@ Deno.serve(async (req) => {
         webhook: { url: webhookUrl, registered: false, manual: true },
         connected_at: prev?.config?.connected_at ?? new Date().toISOString(),
       };
-      const { data: row, error } = await db
-        .from("channel_accounts")
-        .upsert({
-          user_id: user.id,
-          provider: "dripify",
+      const { data: row, error } = await saveSingleAccount(db, user.id, "dripify", {
           config,
           secret: apiKey,
           webhook_secret: webhookSecret,
           status: "connected",
           last_error: null,
-        }, { onConflict: "user_id,provider" })
-        .select("*")
-        .single();
+        });
       if (error) throw new Error("No se pudo guardar la cuenta: " + error.message);
       return json({ account: publicRow(row) }, 200, cors);
     }
@@ -1168,9 +1197,19 @@ Deno.serve(async (req) => {
       // cobrarse y la sesión de LinkedIn deja de usarse). Si falla, se sigue:
       // sin account_id guardado el motor ya no puede enviar.
       if (provider === "unipile") {
-        const prev = await loadAccount("unipile");
+        // Con `account_id`, solo esa cuenta; sin él, todas (antes había una sola).
+        const rows = await linkedinRows();
+        const want = clean(payload.account_id, 60);
+        const targets = rows.filter((r) => r.status !== "disconnected" && (!want || String(r.id) === want));
+        if (want && !targets.length) return json({ error: "No encontramos esa cuenta de LinkedIn." }, 404, cors);
         const env = unipile.unipileEnv();
-        if (env && prev?.secret) { try { await unipile.deleteAccount(env, prev.secret); } catch (e) { console.warn("[channel-connect] unipile delete:", unipile.humanError(e)); } }
+        for (const prev of targets) {
+          if (env && prev.secret) { try { await unipile.deleteAccount(env, prev.secret); } catch (e) { console.warn("[channel-connect] unipile delete:", unipile.humanError(e)); } }
+          // La fila se conserva: los leads que contactó y sus eventos la nombran.
+          const { error } = await db.from("channel_accounts").update({ status: "disconnected", secret: "", last_error: null }).eq("id", prev.id);
+          if (error) throw new Error(error.message);
+        }
+        return json({ ok: true, kept: true, ...linkedinPayload(await linkedinRows()) }, 200, cors);
       }
       // La fila se conserva (status 'disconnected', credencial borrada) para
       // que webhook_secret sobreviva: WATI solo sabe CREAR webhooks (listar o

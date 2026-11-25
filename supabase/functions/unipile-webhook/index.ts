@@ -32,6 +32,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as unipile from "../_shared/unipile.ts";
+import * as liAccounts from "../_shared/linkedin-accounts.ts";
 import { linkedinSlug } from "../_shared/dripify.ts";
 import { patchChannelConfig } from "../_shared/channel-config.ts";
 import * as suppression from "../_shared/suppression.ts";
@@ -130,14 +131,26 @@ Deno.serve(async (req) => {
       if (!userId || !env) return json({ ignored: true, reason: "bad state" });
       const acc = await unipile.getAccount(env, ev.accountId);
       if (acc.type.toUpperCase() !== "LINKEDIN") return json({ ignored: true, reason: "not linkedin" });
-      await unipile.saveAccount(db, userId, acc);
+      try { await unipile.saveAccount(db, userId, acc); }
+      catch (e) {
+        if (!(e instanceof unipile.LinkedinAccountLimitError)) throw e;
+        // Ya tiene el máximo de cuentas: esta no se guarda y se borra en el
+        // proveedor para que no quede cobrándose.
+        try { await unipile.deleteAccount(env, acc.id); } catch (de) { console.warn("[unipile-webhook] delete:", unipile.humanError(de)); }
+        return json({ ignored: true, reason: "account limit" });
+      }
       return json({ ok: true });
     }
 
     if (ev.kind === "other") return json({ ignored: true });
-    const { data: acc } = await db.from("channel_accounts").select("id, user_id, config, status").eq("provider", "unipile").eq("secret", ev.accountId).maybeSingle();
+    const { data: accRows } = await db.from("channel_accounts").select("id, user_id, config, status").eq("provider", "unipile").eq("secret", ev.accountId).limit(1);
+    const acc = accRows?.[0] ?? null;
     if (!acc) return json({ ignored: true, reason: "unknown account" });
     const userId = String(acc.user_id);
+    // Un usuario puede tener varias cuentas de LinkedIn: cada aviso es de UNA
+    // (la conexión y el chat de un lead son de la cuenta que lo contactó).
+    const rows = await liAccounts.loadAccounts(db, userId);
+    const mine = (en: Json) => liAccounts.belongsTo(en?.provider_refs?.unipile_account_id, acc, rows);
 
     if (ev.kind === "account_status") {
       const usable = unipile.accountUsable(ev.status);
@@ -159,12 +172,13 @@ Deno.serve(async (req) => {
     if (ev.kind === "relation") {
       const { member, ens } = await findLead(db, userId, ev.providerId, ev.profileUrl || ev.publicIdentifier);
       for (const en of ens) {
-        if (en.linkedin_connected_at) continue;
+        // Aceptó a OTRA cuenta del usuario: esta cadencia sigue esperando a la suya.
+        if (en.linkedin_connected_at || !mine(en)) continue;
         await db.from("campaign_enrollments").update({ linkedin_connected_at: at }).eq("id", en.id);
         // Su mensaje de LinkedIn esperaba esta aceptación: sale en la próxima corrida.
         await db.from("campaign_enrollments").update({ next_run_at: at, error_detail: null })
           .eq("id", en.id).eq("status", "active").eq("error_detail", ACCEPT_WAIT_DETAIL);
-        await stepEvent(db, en, userId, member?.id ?? null, "connection_accepted", `${ev.name || "El lead"} aceptó la conexión.`, { provider_id: ev.providerId });
+        await stepEvent(db, en, userId, member?.id ?? null, "connection_accepted", `${ev.name || "El lead"} aceptó la conexión.`, { provider_id: ev.providerId, account_id: acc.id });
       }
       await setCrm(db, member, "conexion_aceptada", at);
       return json({ ok: true, matched: ens.length });
@@ -190,7 +204,7 @@ Deno.serve(async (req) => {
       status: ev.own ? "sent" : "delivered", sent_at: ev.at,
       campaign_id: primary?.campaign_id ?? null, enrollment_id: primary?.id ?? null,
       payload: {
-        source: "unipile_webhook", chat_id: ev.chatId, provider_id: leadProviderId || null,
+        source: "unipile_webhook", chat_id: ev.chatId, provider_id: leadProviderId || null, account_id: acc.id,
         // Fotos, audios y archivos: el archivo se baja después (inbox-send media).
         ...(ev.attachments.length ? { type: ev.attachments[0].type, media: true, file_name: ev.attachments[0].name, attachments: ev.attachments } : {}),
         ...(member ? {} : { lead: { name: leadName || null, linkedin_url: leadUrl || null } }),
@@ -220,10 +234,10 @@ Deno.serve(async (req) => {
       else if (LIVE.includes(en.status)) { patch.status = "replied"; patch.stop_reason = "Respondió por LinkedIn."; }
       if (!en.replied_at) { patch.replied_at = at; patch.replied_channel = "linkedin"; }
       // Si respondió, la conexión existe (o el mensaje llegó como InMail).
-      const refs = { ...(en.provider_refs ?? {}), unipile_chat_id: ev.chatId };
-      patch.provider_refs = refs;
-      await db.from("campaign_enrollments").update(patch).eq("id", en.id);
-      await stepEvent(db, en, userId, member?.id ?? null, optOut ? "opted_out" : "replied", ev.text, { chat_id: ev.chatId, message_id: ev.messageId });
+      // El chat es de esta cuenta: no se anota en un enrolamiento que lleva otra.
+      if (mine(en)) patch.provider_refs = { ...(en.provider_refs ?? {}), unipile_chat_id: ev.chatId };
+      if (Object.keys(patch).length) await db.from("campaign_enrollments").update(patch).eq("id", en.id);
+      await stepEvent(db, en, userId, member?.id ?? null, optOut ? "opted_out" : "replied", ev.text, { chat_id: ev.chatId, message_id: ev.messageId, account_id: acc.id });
     }
     if (optOut) {
       if (member && member.contact_status !== "dado_de_baja") await db.from("prospect_list_members").update({ contact_status: "dado_de_baja", status_changed_at: at }).eq("id", member.id);

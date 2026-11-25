@@ -31,3 +31,31 @@ export async function patchChannelConfig(
   await db.from("channel_accounts").update({ config }).eq("id", id);
   return config;
 }
+
+/**
+ * Guarda la cuenta de un proveedor que tiene UNA fila por usuario (WATI, Meta,
+ * Dripify, Apollo). Reemplaza al upsert con `onConflict: "user_id,provider"`:
+ * desde que un usuario puede tener varias cuentas de LinkedIn (provider
+ * 'unipile', 2026-11-25) esa pareja ya no es única para toda la tabla y
+ * PostgREST no puede resolver el conflicto con un índice parcial. Devuelve lo
+ * mismo que `.select("*").single()`.
+ */
+export async function saveSingleAccount(
+  db: SupabaseClient,
+  userId: string,
+  provider: string,
+  values: Record<string, Json>,
+): Promise<{ data: Json | null; error: { message: string } | null }> {
+  const find = async () => {
+    const { data } = await db.from("channel_accounts").select("id").eq("user_id", userId).eq("provider", provider).order("created_at", { ascending: true }).limit(1);
+    return data?.[0]?.id ?? null;
+  };
+  const update = (id: string) => db.from("channel_accounts").update(values).eq("id", id).select("*").single();
+  const id = await find();
+  if (id) return await update(id);
+  const ins = await db.from("channel_accounts").insert({ user_id: userId, provider, ...values }).select("*").single();
+  if (!ins.error) return ins;
+  // Otra petición la creó a la vez: se actualiza esa.
+  const again = await find();
+  return again ? await update(again) : ins;
+}
