@@ -8049,4 +8049,15 @@ window.I18N_DICTS['pt-BR'] = {
   "Formato no aceptado. Sube PDF, PowerPoint (.pptx), Word (.docx) o una imagen (PNG, JPG, WebP).": "Formato não aceito. Envie PDF, PowerPoint (.pptx), Word (.docx) ou uma imagem (PNG, JPG, WebP).",
   "No se pudo abrir el archivo. Reintenta.": "Não foi possível abrir o arquivo. Tente novamente.",
   "Cada lead admite hasta {0} fuentes. Quita una para agregar otra.": "Cada lead aceita até {0} fontes. Remova uma para adicionar outra.",
+  // AI Sales Coach — voces por persona en la captura local (2026-11-25)
+  "Decir quién es esta voz": "Dizer de quem é esta voz",
+  "Voces en la reunión:": "Vozes na reunião:",
+  "tu equipo": "sua equipe",
+  "¿quién es?": "quem é?",
+  "¿Quién es esta voz?": "De quem é esta voz?",
+  "De tu equipo": "Da sua equipe",
+  "Otra persona": "Outra pessoa",
+  "Nombre de la persona": "Nome da pessoa",
+  "Es un lead": "É um lead",
+  "Es de mi equipo": "É da minha equipe",
 };

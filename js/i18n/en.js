@@ -7901,4 +7901,15 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Formato no aceptado. Sube PDF, PowerPoint (.pptx), Word (.docx) o una imagen (PNG, JPG, WebP).": "Format not accepted. Upload a PDF, PowerPoint (.pptx), Word (.docx) or an image (PNG, JPG, WebP).",
   "No se pudo abrir el archivo. Reintenta.": "The file couldn't be opened. Try again.",
   "Cada lead admite hasta {0} fuentes. Quita una para agregar otra.": "Each lead allows up to {0} sources. Remove one to add another.",
+  // AI Sales Coach — voces por persona en la captura local (2026-11-25)
+  "Decir quién es esta voz": "Say who this voice is",
+  "Voces en la reunión:": "Voices in the meeting:",
+  "tu equipo": "your team",
+  "¿quién es?": "who is it?",
+  "¿Quién es esta voz?": "Who is this voice?",
+  "De tu equipo": "From your team",
+  "Otra persona": "Someone else",
+  "Nombre de la persona": "Person's name",
+  "Es un lead": "It's a lead",
+  "Es de mi equipo": "It's from my team",
 });

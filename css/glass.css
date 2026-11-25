@@ -676,6 +676,28 @@ html[data-theme="dark"] .rf-step:hover { box-shadow: inset 0 1px 0 rgba(255,255,
 .mc-tr-row.is-sdr .mc-tr-who { color: var(--green); }
 .mc-tr-text { color: var(--text2); }
 .mc-tr-row.is-ghost .mc-tr-text { color: var(--text3); font-style: italic; }
+.mc-transcript-card { position: relative; }
+.mc-tr-who.is-tag { font: inherit; font-weight: 700; background: none; border: 0; padding: 0; cursor: pointer; border-bottom: 1px dashed currentColor; }
+.mc-tr-who.is-tag:hover { opacity: .8; }
+.mc-tr-who.is-tag:focus-visible, .mc-spk:focus-visible, .mc-spk-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.mc-speakers { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.mc-spk-k { font-size: 11.5px; font-weight: 600; color: var(--text3); }
+.mc-spk { font: inherit; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; cursor: pointer; background: var(--cyan-soft); border: 1px solid transparent; color: var(--cyan); }
+.mc-spk.is-team { background: var(--green-soft); color: var(--green); }
+.mc-spk.is-new { background: var(--amber-soft); color: var(--amber); border-color: var(--amber); }
+.mc-spk-menu {
+  position: absolute; z-index: 5; left: 18px; right: 18px; top: 64px; max-height: 320px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 16px;
+  background: var(--surface-raised, var(--surface)); border: 1px solid var(--glass-edge);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow-lg);
+}
+.mc-spk-menu-h { font-size: 13px; font-weight: 700; color: var(--text); }
+.mc-spk-menu-k { font-size: 11.5px; font-weight: 600; color: var(--text3); margin-top: 6px; }
+.mc-spk-opt { font: inherit; font-size: 13px; text-align: left; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--glass-edge); background: var(--surface2); color: var(--text); cursor: pointer; }
+.mc-spk-opt:hover { border-color: var(--accent); }
+.mc-spk-menu input { width: 100%; box-sizing: border-box; }
+.mc-spk-menu-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .mc-talk-num { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text3); }
 .mc-talk-bar { height: 8px; border-radius: 99px; background: var(--cyan-soft); overflow: hidden; box-shadow: inset 0 1px 2px rgba(10,10,15,.12); }
 .mc-talk-fill { height: 100%; border-radius: 99px; background: var(--green); transition: width .5s var(--ease-out, ease-out); }

@@ -1349,12 +1349,45 @@ async function replaceChunksWithRecallTranscript(
   }
 }
 
+/**
+ * Voces por persona (captura local, 2026-11-25): durante la reunión cada voz
+ * remota se guardó como «Lead» / «Persona N» y el vendedor le puso nombre. Al
+ * cerrar, el navegador manda esas asignaciones: se corrige el hablante en los
+ * chunks ya guardados y quien es del equipo del vendedor entra a `context.team`
+ * (así el reporte no lo trata como lead). Devuelve el contexto resultante.
+ */
+async function applySpeakerTags(ctx: Ctx, meeting: Json, raw: unknown): Promise<Json> {
+  const context: Json = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
+  if (!Array.isArray(raw) || !raw.length) return context;
+  const extraTeam: Json[] = [];
+  for (const x of raw.slice(0, 12)) {
+    const name = cut(x?.name, 60);
+    if (!name || /^sdr$/i.test(name)) continue;
+    const from = (Array.isArray(x?.from) ? x.from : []).map((f: unknown) => cut(f, 60))
+      .filter((f: string) => f && f !== name && !/^sdr$/i.test(f)).slice(0, 4);
+    for (const old of from) {
+      const { error } = await ctx.supa.from("coach_transcript_chunks")
+        .update({ speaker: name }).eq("meeting_id", meeting.id).eq("speaker", old);
+      if (error) console.warn("[sales-coach] speaker rename:", error.message);
+    }
+    if (x?.side === "seller") extraTeam.push({ name });
+  }
+  if (!extraTeam.length) return context;
+  const team = sanitizeTeam([...(Array.isArray(context.team) ? context.team : []), ...extraTeam]);
+  const next = { ...context, team };
+  await ctx.supa.from("coach_meetings").update({ context: next }).eq("id", meeting.id);
+  return next;
+}
+
 async function actionEndMeeting(ctx: Ctx, p: Json): Promise<Json> {
   const meeting = await loadAuthorizedMeeting(ctx, p?.meeting_id);
 
   // Idempotency: double "end" must not stop the bot twice nor re-spend tokens.
   if (meeting.status === "closed" && meeting.final_report) return meeting.final_report;
   if (meeting.status === "processing") return actionFinalizeReport(ctx, { meeting_id: meeting.id });
+
+  // Solo captura local: en modo asistente Recall ya entrega cada voz con su nombre.
+  if (!meeting.recall_bot_id) meeting.context = await applySpeakerTags(ctx, meeting, p?.speakers);
 
   const endedAt = meeting.ended_at ?? new Date().toISOString();
   await ctx.supa.from("coach_meetings").update({ ended_at: endedAt }).eq("id", meeting.id);
@@ -2104,7 +2137,7 @@ const LIVE_TURN_SCHEMA = {
 
 const SYSTEM_PROMPT_LIVE_TURN = (doctrine: string): string => [
   "Eres el coach de ventas de Predictable.ai en vivo, al oído del vendedor durante una llamada B2B.",
-  'La conversación tiene 2 hablantes: "Lead" y "SDR" (el vendedor).',
+  'Hablantes: "SDR" es el vendedor. Los demás son del lado del lead ("Lead", "Persona N" o su nombre), salvo los que el contexto marque como del equipo del vendedor.',
   "",
   doctrine,
   "",
@@ -2147,7 +2180,8 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
     : ["Conversación reciente:", transcript];
 
   // Minuto de la llamada y fase anterior, para ubicar la fase sin releer todo.
-  const position = String(payload?.position ?? "").slice(0, 200).trim();
+  // 900: además trae quién es cada voz cuando la captura local las separa.
+  const position = String(payload?.position ?? "").slice(0, 900).trim();
   const [engine, learned, system] = await Promise.all([
     engineForUser(ctx.supa, ctx.userId, "coach"),
     learnedObjectionsBlock(ctx.supa, ctx.userId),
