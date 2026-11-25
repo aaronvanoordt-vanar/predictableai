@@ -1671,8 +1671,9 @@ async function preparePending(ctx: Ctx): Promise<number> {
   const horizon = new Date(ctx.now.getTime() + PREPARE_AHEAD_MS).toISOString();
   const { data: ens } = await db
     .from("campaign_enrollments")
-    .select("id, campaign_id, member_id, user_id, next_node_id, next_position, started_at, last_inbound_whatsapp_at, linkedin_connected_at")
+    .select("id, campaign_id, member_id, user_id, next_node_id, next_position, started_at, last_inbound_whatsapp_at, linkedin_connected_at, campaigns!inner(status)")
     .eq("status", "active")
+    .eq("campaigns.status", "active")
     .not("next_node_id", "is", null)
     .lte("next_run_at", horizon)
     .order("next_run_at", { ascending: true })
@@ -2047,14 +2048,21 @@ Deno.serve(async (req) => {
     .lt("processing_since", new Date(now.getTime() - STALE_PROCESSING_MS).toISOString());
 
   // 2. Vencidos.
-  const { data: due, error: dueErr } = await db
+  // Solo de campañas activas. Un enrolamiento `active` de una campaña pausada
+  // (o en borrador) no avanza su next_run_at (runOne lo suelta tal cual), así
+  // que sin este filtro los más viejos ocupaban el lote entero de cada corrida
+  // y los de las campañas activas quedaban "Activo" sin enviar nada durante
+  // semanas (2026-11-25: 91 leads clavados desde el 17-nov).
+  const { data: dueRows, error: dueErr } = await db
     .from("campaign_enrollments")
-    .select("*")
+    .select("*, campaigns!inner(status)")
     .eq("status", "active")
+    .eq("campaigns.status", "active")
     .lte("next_run_at", now.toISOString())
     .order("next_run_at", { ascending: true })
     .limit(BATCH);
   if (dueErr) return json({ error: dueErr.message }, 500);
+  const due = ((dueRows ?? []) as Json[]).map(({ campaigns: _c, ...en }) => en);
 
   let processed = 0;
   const loopStarted = Date.now();

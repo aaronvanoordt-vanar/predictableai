@@ -110,6 +110,29 @@
     error:        { label: 'Error',         pill: 'red' },
   };
   /**
+   * Un lead cuya cadencia ya terminó sin respuesta (completada, detenida a
+   * mano o con error) se puede volver a enrolar en la misma campaña: el
+   * enrolamiento existente vuelve al primer paso (UNIQUE campaign_id +
+   * member_id). Nunca quien respondió o se dio de baja.
+   */
+  function canReenroll(e) {
+    return !!e && (e.status === 'completed' || e.status === 'error') && !e.replied_at;
+  }
+  /** Enrolamientos de la campaña abierta por member_id. */
+  function enrollmentsByMember() {
+    var map = new Map();
+    state.enrollments.forEach(function (e) { map.set(String(e.member_id), e); });
+    return map;
+  }
+  /** Leads de la lista que se pueden enrolar: los nuevos y los que terminaron sin respuesta. */
+  function enrollCandidates() {
+    var byMember = enrollmentsByMember();
+    return state.members.filter(function (m) {
+      var e = byMember.get(String(m.id));
+      return !e || canReenroll(e);
+    });
+  }
+  /**
    * Estado que se muestra y se cuenta. Una respuesta que llega cuando la
    * cadencia ya terminó (p. ej. una campaña de un solo WhatsApp) deja el
    * enrolamiento en `completed` con `replied_at` puesto: para el usuario ese
@@ -1100,7 +1123,33 @@
     }
     if (!members.length) return { enrolled: 0, skipped: 0, suppressed: blocked.length };
     var now = Date.now();
-    var rows = members.map(function (m) {
+    // Los que ya terminaron su cadencia en esta campaña sin responder vuelven
+    // al primer paso sobre su mismo enrolamiento (UNIQUE campaign_id +
+    // member_id). Se revalida contra la base: solo se reinicia un
+    // completed/error sin respuesta, nunca uno activo, respondido o de baja.
+    var restartIds = [];
+    var restarted = [];
+    var existing = await sb().from('campaign_enrollments').select('id, member_id, status, replied_at')
+      .eq('campaign_id', c.id).in('member_id', members.map(function (m) { return m.id; }));
+    if (existing.error) throw new Error('No se pudieron revisar los leads de la campaña: ' + existing.error.message);
+    (existing.data || []).forEach(function (e) {
+      if (canReenroll(e)) { restartIds.push(e.id); restarted.push(e.member_id); }
+    });
+    if (restartIds.length) {
+      var rs = await sb().from('campaign_enrollments').update({
+        status: 'active',
+        started_at: new Date(now).toISOString(),
+        next_position: 0,
+        next_node_id: first.id,
+        next_run_at: new Date(now + L.delayMs(first)).toISOString(),
+        error_detail: null,
+        stop_reason: null,
+        processing_since: null,
+      }).in('id', restartIds).in('status', ['completed', 'error']).is('replied_at', null).select('member_id');
+      if (rs.error) throw new Error('No se pudieron volver a enrolar los leads: ' + rs.error.message);
+      restarted = (rs.data || []).map(function (r) { return r.member_id; });
+    }
+    var rows = members.filter(function (m) { return restarted.indexOf(m.id) === -1; }).map(function (m) {
       return {
         campaign_id: c.id,
         member_id: m.id,
@@ -1112,9 +1161,11 @@
         next_run_at: new Date(now + L.delayMs(first)).toISOString(),
       };
     });
-    var res = await sb().from('campaign_enrollments').upsert(rows, { onConflict: 'campaign_id,member_id', ignoreDuplicates: true }).select('member_id');
+    var res = rows.length
+      ? await sb().from('campaign_enrollments').upsert(rows, { onConflict: 'campaign_id,member_id', ignoreDuplicates: true }).select('member_id')
+      : { data: [], error: null };
     if (res.error) throw new Error('No se pudieron enrolar los leads: ' + res.error.message);
-    var enrolledIds = (res.data || []).map(function (r) { return r.member_id; });
+    var enrolledIds = (res.data || []).map(function (r) { return r.member_id; }).concat(restarted);
     var toFlag = members.filter(function (m) { return enrolledIds.indexOf(m.id) !== -1 && (m.contact_status || 'no_contactado') === 'no_contactado'; }).map(function (m) { return m.id; });
     if (toFlag.length) {
       await sb().from('prospect_list_members').update({ contact_status: 'en_campana', status_changed_at: new Date().toISOString() }).in('id', toFlag);
@@ -4244,10 +4295,10 @@
       card.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: 'Cargando leads de la lista…' }));
       return card;
     }
-    var enrolledIds = new Set(state.enrollments.map(function (e) { return String(e.member_id); }));
-    var candidates = state.members.filter(function (m) { return !enrolledIds.has(String(m.id)); });
+    var byMember = enrollmentsByMember();
+    var candidates = enrollCandidates();
     if (!candidates.length) {
-      card.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: state.members.length ? 'Todos los leads de la lista ya están en esta campaña.' : 'La lista está vacía. Agrega leads desde Buscar.' }));
+      card.appendChild(h('div', { class: 'pros-hint', style: 'padding:14px', text: state.members.length ? 'Todos los leads de la lista ya están en esta campaña y siguen en curso, respondieron o se dieron de baja.' : 'La lista está vacía. Agrega leads desde Buscar.' }));
       return card;
     }
     var acts = flowActions(c);
@@ -4263,7 +4314,8 @@
     candidates.forEach(function (m) {
       var checked = state.selected.has(String(m.id)) ? ' checked' : '';
       html += '<tr><td><input type="checkbox" data-action="enroll-check" data-id="' + esc(String(m.id)) + '"' + checked + '></td>' +
-        '<td><div style="font-weight:600">' + esc(memberName(m)) + '</div>' + (m.title ? '<div class="pros-cellsub">' + esc(m.title) + '</div>' : '') + '</td>' +
+        '<td><div style="font-weight:600">' + esc(memberName(m)) + '</div>' + (m.title ? '<div class="pros-cellsub">' + esc(m.title) + '</div>' : '') +
+          (byMember.get(String(m.id)) ? '<div title="Su cadencia en esta campaña terminó sin respuesta. Al enrolarlo vuelve a empezar desde el primer paso.">' + pill('Volver a enrolar', 'amber') + '</div>' : '') + '</td>' +
         '<td>' + esc(m.company || '—') + (isOutdated(m) ? '<div title="' + esc((m.research.employment.reason || '') + (m.research.employment.current_company ? ' Hoy: ' + m.research.employment.current_company + '.' : '')) + '">' + pill('Desactualizado', 'red') + '</div>' : '') + '</td>' +
         '<td>' + (hasPhone(m)
           ? (needsWa && waReachOf(m) ? '<span title="' + esc(waReachOf(m).reason) + '">' + pill(waReachOf(m).label, WA_REACH_PILL[waReachOf(m).status] || 'gray') + '</span>' : pill('sí', 'green'))
@@ -4290,6 +4342,8 @@
       }
       if (ws.unknown) hints.push(ws.unknown + (ws.unknown === 1 ? ' número no dice' : ' números no dicen') + ' si es celular (p. ej. México o Argentina sin el 9): se les envía y, si WhatsApp responde que no está, no se les vuelve a intentar en ninguna campaña.');
     }
+    var again = candidates.filter(function (m) { return byMember.get(String(m.id)); }).length;
+    if (again) hints.push(again + (again === 1 ? ' lead ya pasó por esta campaña y terminó' : ' leads ya pasaron por esta campaña y terminaron') + ' sin responder (completados, detenidos o con error): si los enrolas, la cadencia vuelve a empezar desde el primer paso. Los mensajes IA que ya les llegaron no se repiten.');
     if (needsEmail) hints.push('Email necesita email revelado.');
     if (needsLi) hints.push('LinkedIn necesita la URL del perfil del lead.');
     var outdated = candidates.filter(isOutdated).length;
@@ -4345,10 +4399,16 @@
     return out;
   }
 
-  /** Activos que el motor dejó esperando con un motivo (error_detail). */
+  /**
+   * Activos que el motor dejó esperando con un motivo (error_detail) o que
+   * llevan más de una hora vencidos sin que el motor los tome.
+   */
   function heldEnrollments() {
+    var stale = Date.now() - 60 * 60 * 1000;
     return state.enrollments.filter(function (e) {
-      return e.status === 'active' && String(e.error_detail || '').trim();
+      if (e.status !== 'active') return false;
+      if (String(e.error_detail || '').trim()) return true;
+      return !!e.next_run_at && new Date(e.next_run_at).getTime() < stale;
     });
   }
 
@@ -5720,9 +5780,7 @@
       var btn = state.root.querySelector('[data-action="enroll"]');
       if (btn) { btn.disabled = !state.selected.size; btn.textContent = 'Enrolar ' + (state.selected.size ? state.selected.size + ' seleccionados' : 'seleccionados'); }
     } else if (action === 'enroll-check-all') {
-      var enrolledIds = new Set(state.enrollments.map(function (x) { return String(x.member_id); }));
-      state.members.forEach(function (m) {
-        if (enrolledIds.has(String(m.id))) return;
+      enrollCandidates().forEach(function (m) {
         if (t.checked) state.selected.add(String(m.id)); else state.selected.delete(String(m.id));
       });
       render();
