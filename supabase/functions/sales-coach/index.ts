@@ -448,7 +448,8 @@ const SYSTEM_PROMPT_REPORT = (doctrine: string): string => [
   "  ],",
   '  "verdict": "<frase corta con el veredicto de la reunión>",',
   '  "temperatura_lead": "frio|tibio|caliente",',
-  '  "probabilidad_avance": <número 0-100>',
+  '  "probabilidad_avance": <número 0-100>,',
+  '  "etapa_alcanzada": "rapport|discovery|reframe|demo|negotiation|close"',
   "}",
   "",
   "REGLAS DURAS:",
@@ -459,6 +460,8 @@ const SYSTEM_PROMPT_REPORT = (doctrine: string): string => [
   '- Reserva "temperatura_lead": "frio", "probabilidad_avance": 0, scores en 0 y "verdict": "Transcript insuficiente para analizar — la reunión fue muy corta o el audio no se capturó" únicamente para transcripts sin contenido analizable (solo saludos, silencio, audio no capturado, o texto sin preguntas ni respuestas sustantivas).',
   '- "siguiente_paso" es UNO solo y concreto (a quién, qué, cuándo). "next_steps" puede listar el resto en orden.',
   '- "resumen_corto" son exactamente 3 frases cortas; si el transcript es insuficiente, devuelve [] y "siguiente_paso" vacío.',
+  '- "etapa_alcanzada" es la fase más avanzada a la que llegó de verdad la conversación (si hubo reuniones anteriores, puede partir de donde quedó la última). La siguiente reunión con este lead arranca desde ahí.',
+  '- Si el contexto nombra a otras personas del EQUIPO DEL VENDEDOR, son vendedores: evalúa al equipo como un solo lado y no cuentes lo que dicen como objeciones ni señales del lead.',
   '- TOPES (un reporte largo no se lee y tarda más en llegar): "insights" máximo 4, "highlights" máximo 3, "missed" máximo 3, "next_steps" máximo 3, "fortalezas" y "areas_mejora" máximo 3 cada una. Cada elemento, una o dos frases. Las objeciones reales van todas.',
   "- Español neutro latinoamericano (tú). Sé directo y específico.",
 ].join("\n");
@@ -633,9 +636,11 @@ const REPORT_SCHEMA = {
     verdict: { type: "string" },
     temperatura_lead: { type: "string", enum: ["frio", "tibio", "caliente"] },
     probabilidad_avance: { type: "integer", description: "0-100" },
+    // Hasta dónde llegó la venta: la próxima reunión arranca desde aquí.
+    etapa_alcanzada: { type: "string", enum: ["rapport", "discovery", "reframe", "demo", "negotiation", "close"] },
   },
   required: [
-    "score_total", "scores", "resumen_corto", "siguiente_paso", "codigo_reptil", "resumen",
+    "score_total", "scores", "resumen_corto", "siguiente_paso", "codigo_reptil", "resumen", "etapa_alcanzada",
     "insights", "objections", "highlights",
     "missed", "feedback", "next_steps", "verdict", "temperatura_lead", "probabilidad_avance",
   ],
@@ -886,11 +891,13 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
     .map((b: Json) => `[${new Date(b.ts).toISOString().slice(11, 19)}] ${b.speaker}: ${b.text}`)
     .join("\n");
 
+  const liveCtx = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
   const userPrompt = [
     "Contexto del prospecto:",
     RESEARCH_CAVEAT,
-    JSON.stringify(meeting.context ?? {}),
+    leadContextJson(liveCtx, 12_000),
     "",
+    meetingFramingBlock(liveCtx, true),
     "Estado anterior:",
     meeting.last_state ? JSON.stringify(meeting.last_state) : "null (primer análisis)",
     "",
@@ -926,6 +933,147 @@ async function maybeRunCoachingAnalysis(supa: SupabaseClient, meetingId: string)
 // ───────────────────────────────────────────────────────────────────────────
 // Actions
 // ───────────────────────────────────────────────────────────────────────────
+// ── Reuniones anteriores y equipo del vendedor (2026-11-25, feedback de cliente) ──
+// (1) Con un lead no hay una sola reunión: el coach recomendaba siempre como
+// si fuera la primera. Al iniciar, el SERVIDOR busca las reuniones cerradas de
+// este usuario con las mismas personas y deja un resumen compacto en
+// `context.history` (lo arma el servidor, nunca el navegador: es lo que dice
+// el reporte guardado). (2) Del lado del vendedor puede entrar más de una
+// persona: `context.team` son los compañeros que el usuario marcó; todos los
+// demás hablantes son del lado del lead.
+const HISTORY_MAX = 4;
+const STAGE_LABEL: Record<string, string> = {
+  rapport: "Apertura", discovery: "Descubrimiento", reframe: "Reencuadre",
+  demo: "Solución", negotiation: "Objeciones y negociación", close: "Cierre",
+};
+
+function cut(v: unknown, n: number): string {
+  return typeof v === "string" ? v.trim().slice(0, n) : "";
+}
+
+function contextMemberIds(prospectId: unknown, context: Json): string[] {
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    const id = typeof v === "string" ? v.trim() : "";
+    if (id && !out.includes(id)) out.push(id);
+  };
+  push(prospectId);
+  if (Array.isArray(context?.member_ids)) context.member_ids.slice(0, MEETING_MEMBER_MAX).forEach(push);
+  return out;
+}
+
+/** Las reuniones anteriores (cerradas, con reporte real) de este usuario con esas personas, de la más reciente a la más antigua. */
+async function loadLeadHistory(supa: SupabaseClient, userId: string | null, memberIds: string[]): Promise<Json[]> {
+  if (!userId || !memberIds.length) return [];
+  try {
+    const { data, error } = await supa.from("coach_meetings")
+      .select("id, prospect_id, prospect_name, started_at, outcome, outcome_note, next_meeting_date, last_state, final_report, context")
+      .eq("user_id", userId).eq("status", "closed").not("final_report", "is", null)
+      .order("started_at", { ascending: false }).limit(60);
+    if (error || !data) return [];
+    const wanted = new Set(memberIds);
+    const out: Json[] = [];
+    for (const m of data as Json[]) {
+      const ids = contextMemberIds(m.prospect_id, (m.context && typeof m.context === "object") ? m.context : {});
+      if (!ids.some((id) => wanted.has(id))) continue;
+      const r = (m.final_report && typeof m.final_report === "object") ? m.final_report : {};
+      const corto = (Array.isArray(r.resumen_corto) ? r.resumen_corto : [])
+        .map((x: unknown) => cut(x, 260)).filter(Boolean).slice(0, 3);
+      // Sin resumen = transcript insuficiente: esa reunión no enseña nada.
+      if (!corto.length && !cut(r.resumen, 10)) continue;
+      const sp = (r.siguiente_paso && typeof r.siguiente_paso === "object") ? r.siguiente_paso : {};
+      const stage = cut(r.etapa_alcanzada, 20) || cut(m.last_state?.stage, 20);
+      out.push({
+        meeting_id: m.id,
+        date: m.started_at,
+        prospect_name: m.prospect_name ?? null,
+        outcome: m.outcome ?? null,
+        outcome_note: cut(m.outcome_note, 240) || null,
+        next_meeting_date: m.next_meeting_date ?? null,
+        stage: STAGE_LABEL[stage] ? stage : null,
+        temperature: cut(r.temperatura_lead, 12) || null,
+        summary: corto.length ? corto : [cut(r.resumen, 400)],
+        next_step: cut(sp.accion, 240) ? { accion: cut(sp.accion, 240), cuando: cut(sp.cuando, 80) } : null,
+        objections: (Array.isArray(r.objections) ? r.objections : []).slice(0, 4).map((o: Json) => ({
+          objection: cut(o?.objection, 160), result: cut(o?.result, 20),
+        })).filter((o: Json) => o.objection),
+      });
+      if (out.length >= HISTORY_MAX) break;
+    }
+    return out;
+  } catch (e) {
+    console.warn("[sales-coach] lead history:", e);
+    return [];
+  }
+}
+
+/** Compañeros del vendedor en la llamada, tal como los marcó el usuario (solo nombre y rol, acotados). */
+function sanitizeTeam(v: unknown): Json[] {
+  if (!Array.isArray(v)) return [];
+  const out: Json[] = [];
+  for (const x of v.slice(0, 8)) {
+    const name = cut(typeof x === "string" ? x : x?.name, 80);
+    if (!name || out.some((t) => t.name.toLowerCase() === name.toLowerCase())) continue;
+    out.push({ name, role: cut(x?.role, 60) || null });
+  }
+  return out;
+}
+
+/**
+ * Lo que el modelo necesita saber ANTES de la conversación: quién más vende y
+ * qué pasó en las reuniones anteriores. Texto aparte del JSON del lead para
+ * que nunca lo recorte el límite de caracteres del contexto.
+ */
+function meetingFramingBlock(context: Json, live: boolean): string {
+  const lines: string[] = [];
+  const team = sanitizeTeam(context?.team);
+  if (team.length) {
+    lines.push(
+      "=== EQUIPO DEL VENDEDOR EN ESTA LLAMADA ===",
+      "Además del vendedor principal participan estas personas de SU empresa: " +
+        team.map((t) => t.name + (t.role ? ` (${t.role})` : "")).join(", ") + ".",
+      'Son vendedores, NO leads: no les recomiendes venderles ni trates lo que dicen como objeciones o señales de compra. Pueden aparecer en el transcript con su nombre o, en captura local, dentro del canal "Lead" (entran por el audio de la reunión): reconócelos por su nombre y por lo que dicen. Todo otro hablante es del lado del lead.',
+      "",
+    );
+  }
+  const hist = Array.isArray(context?.history) ? context.history.slice(0, HISTORY_MAX) : [];
+  if (hist.length) {
+    lines.push(
+      `=== REUNIONES ANTERIORES CON ESTAS PERSONAS (esta es la n.º ${hist.length + 1}; la más reciente primero) ===`,
+    );
+    hist.forEach((h: Json) => {
+      const when = cut(h?.date, 10);
+      const head = [when, h?.stage && STAGE_LABEL[h.stage] ? `llegó hasta: ${STAGE_LABEL[h.stage]}` : "", h?.outcome ? `resultado: ${cut(h.outcome, 30)}` : "", h?.temperature ? `lead ${cut(h.temperature, 12)}` : ""]
+        .filter(Boolean).join(" · ");
+      lines.push("- " + head);
+      (Array.isArray(h?.summary) ? h.summary : []).slice(0, 3).forEach((x: unknown) => { const t = cut(x, 260); if (t) lines.push("  · " + t); });
+      if (h?.next_step?.accion) lines.push(`  · Siguiente paso acordado: ${cut(h.next_step.accion, 240)}${h.next_step.cuando ? ` (${cut(h.next_step.cuando, 80)})` : ""}`);
+      const objs = (Array.isArray(h?.objections) ? h.objections : []).map((o: Json) => cut(o?.objection, 160) + (o?.result ? ` [${cut(o.result, 20)}]` : "")).filter(Boolean);
+      if (objs.length) lines.push("  · Objeciones: " + objs.join(" | "));
+      if (h?.outcome_note) lines.push("  · Nota del vendedor: " + cut(h.outcome_note, 240));
+    });
+    lines.push(
+      live
+        ? "ESTA NO ES LA PRIMERA REUNIÓN. No recomiendes presentarse ni repetir el descubrimiento ya hecho: abre retomando el siguiente paso acordado y lo que quedó pendiente, y sitúa la fase a partir de donde llegó la anterior (nunca asumas que se retrocedió salvo que el lead lo diga). Las objeciones ya superadas no se reabren; las no resueltas sí."
+        : "Evalúa esta reunión como continuación de las anteriores: di si el deal avanzó o retrocedió respecto de la última y si se cumplió el siguiente paso acordado.",
+      "",
+    );
+  }
+  return lines.join("\n");
+}
+
+/** El contexto del lead sin las piezas que ya van en su propio bloque (ni el resumen rápido de otro modelo). */
+function leadContextJson(context: Json, max: number): string {
+  const { history: _h, team: _t, preview_report: _p, ...rest } = (context && typeof context === "object") ? context : {};
+  return JSON.stringify(rest).slice(0, max);
+}
+
+async function actionLeadHistory(ctx: Ctx, p: Json): Promise<Json> {
+  const ids = (Array.isArray(p?.member_ids) ? p.member_ids : [])
+    .filter((x: unknown) => typeof x === "string" && x.trim()).slice(0, MEETING_MEMBER_MAX);
+  return { meetings: await loadLeadHistory(ctx.supa, ctx.userId, ids) };
+}
+
 async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
   // Guardia: se necesita al menos una reunión corta (reporte + un bloque de 10
   // min, _shared/credit-costs.ts) para iniciar. El costo real, según la
@@ -939,7 +1087,13 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
     }
   }
 
-  const context = (p?.context && typeof p.context === "object") ? p.context : {};
+  const rawContext = (p?.context && typeof p.context === "object") ? p.context : {};
+  // El historial lo arma el servidor con los reportes guardados (se descarta
+  // el que mande el navegador) y el equipo se acota a nombre + rol.
+  const history = await loadLeadHistory(ctx.supa, ctx.userId, contextMemberIds(p?.prospect_id, rawContext));
+  const team = sanitizeTeam(rawContext.team);
+  const { history: _h, team: _t, preview_report: _p, ...cleanContext } = rawContext as Json;
+  const context: Json = { ...cleanContext, ...(team.length ? { team } : {}), ...(history.length ? { history } : {}) };
   const base = {
     meeting_url: strOrNull(p?.meeting_url) ?? "local-capture://realtime",
     prospect_id: strOrNull(p?.prospect_id),
@@ -955,7 +1109,7 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
     const { data, error } = await ctx.supa
       .from("coach_meetings").insert(base).select("id").single();
     if (error) throw new Error(error.message);
-    return { meeting_id: data.id, recall_bot_id: null, mode: "live" };
+    return { meeting_id: data.id, recall_bot_id: null, mode: "live", history, team };
   }
 
   // ── Bot mode: create the meeting row first (so webhook FK inserts always
@@ -1019,7 +1173,7 @@ async function actionStartMeeting(ctx: Ctx, p: Json): Promise<Json> {
     recall_bot_id: recall.id,
     transcript_source: `webhook:${provider}`,
   }).eq("id", meetingId);
-  return { meeting_id: meetingId, recall_bot_id: recall.id, transcript_provider: provider };
+  return { meeting_id: meetingId, recall_bot_id: recall.id, transcript_provider: provider, history, team };
 }
 
 async function actionIngestLocalChunks(ctx: Ctx, p: Json): Promise<Json> {
@@ -1595,8 +1749,10 @@ function meetingMemberIds(meeting: Json): string[] {
 
 function buildReportUserPrompt(meeting: Json, transcript: string, sdrName?: string | null, learned = ""): string {
   const raw = (meeting.context && typeof meeting.context === "object") ? meeting.context : {};
-  // El resumen rápido es salida de otro modelo, no contexto del lead.
-  const { preview_report: _preview, ...ctx } = raw as Json;
+  // El resumen rápido es salida de otro modelo, no contexto del lead; el equipo
+  // y las reuniones anteriores van en su propio bloque (meetingFramingBlock).
+  const { preview_report: _preview, history: _history, team: _team, ...ctx } = raw as Json;
+  const framing = meetingFramingBlock(raw as Json, false);
   const lines = [
     "=== CONTEXTO DE LA REUNIÓN ===",
     `Prospecto: ${meeting.prospect_name || "(sin nombre)"}`,
@@ -1620,6 +1776,7 @@ function buildReportUserPrompt(meeting: Json, transcript: string, sdrName?: stri
     "hablante como parte del prospecto.",
   );
   if (meeting.started_at) lines.push(`Inicio de la reunión: ${meeting.started_at}`);
+  if (framing) lines.push("", framing);
   lines.push(
     "Contexto del lead (JSON):",
     JSON.stringify(ctx),
@@ -1996,11 +2153,20 @@ async function actionCoachTurn(ctx: Ctx, payload: Json): Promise<Json> {
     learnedObjectionsBlock(ctx.supa, ctx.userId),
     trainedSystemPrompt(ctx.supa, ctx.userId, SYSTEM_PROMPT_LIVE_TURN, "coach_live"),
   ]);
+  // Equipo e historial salen de la reunión guardada (los armó el servidor al
+  // iniciar); si no llega meeting_id, de lo que mande el navegador, ya acotado.
+  let framingCtx: Json = (payload?.context && typeof payload.context === "object") ? payload.context : {};
+  if (typeof payload?.meeting_id === "string" && UUID_RE.test(payload.meeting_id)) {
+    const { data: mt } = await ctx.supa.from("coach_meetings")
+      .select("context, user_id").eq("id", payload.meeting_id).maybeSingle();
+    if (mt && mt.user_id === ctx.userId && mt.context && typeof mt.context === "object") framingCtx = mt.context;
+  }
   const userPrompt = [
     "Contexto del prospecto:",
     RESEARCH_CAVEAT,
     // 9.000: una reunión con una lista completa trae la investigación de cada persona.
-    JSON.stringify(payload?.context ?? {}).slice(0, 9_000),
+    leadContextJson(payload?.context ?? {}, 9_000),
+    meetingFramingBlock(framingCtx, true),
     ...(learned ? [learned] : []),
     "",
     ...(position ? [position, ""] : []),
@@ -2175,6 +2341,7 @@ Deno.serve(withLlmContext(async (req: Request) => {
       case "getMeetingReport":     data = await actionGetMeetingReport(ctx, payload); break;
       case "getLastMeetingReport": data = await actionGetLastMeetingReport(ctx, payload); break;
       case "listMeetings":         data = await actionListMeetings(ctx, payload); break;
+      case "leadHistory":          data = await actionLeadHistory(ctx, payload); break;
       case "getSDRReport":         data = await actionGetSDRReport(ctx); break;
       case "setMeetingOutcome":    data = await actionSetMeetingOutcome(ctx, payload); break;
       case "getObjectionsReport":  data = await actionGetObjectionsReport(ctx); break;

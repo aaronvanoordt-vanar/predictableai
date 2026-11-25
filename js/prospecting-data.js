@@ -546,7 +546,7 @@
   }
 
   async function updateMember(memberId, patch) {
-    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'apollo_contact_id', 'snapshot', 'enriched_at', 'contact_status', 'is_favorite', 'company', 'company_domain', 'title', 'first_name', 'last_name', 'name', 'linkedin_url', 'country', 'city', 'state', 'research_notes'];
+    const allowed = ['email', 'email_status', 'phone', 'phone_status', 'outreach', 'outreach_status', 'apollo_contact_id', 'snapshot', 'enriched_at', 'contact_status', 'is_favorite', 'company', 'company_domain', 'title', 'first_name', 'last_name', 'name', 'linkedin_url', 'country', 'city', 'state', 'research_notes', 'sources'];
     const safe = {};
     for (const k of allowed) if (k in (patch || {})) safe[k] = patch[k];
     if (!Object.keys(safe).length) return;
@@ -1698,6 +1698,9 @@
       research: researchText(res),
       research_state: researchState(m),
       research_at: res.generated_at || null,
+      // Fuentes que el vendedor agregó en Listas (js/lead-sources.js): enlaces,
+      // notas y el texto de sus archivos, acotado.
+      sources: global.LeadSources ? global.LeadSources.textFor(m, 1800) : null,
     };
   }
 
@@ -1762,7 +1765,9 @@
     const questions = [];
     const oppTexts = [];
     const research = [];
+    const sources = [];
     ordered.forEach(function (c) {
+      if (c.sources) sources.push('— ' + (c.name || '(sin nombre)') + ' —\n' + c.sources.slice(0, 700));
       if (c.research) research.push('— ' + (c.name || '(sin nombre)') + ' —\n' + c.research.slice(0, 900));
       if (c.notes) notes.push(tag(c, c.notes.slice(0, 400)));
       if (c.handoff_summary) handoff.push(tag(c, c.handoff_summary.slice(0, 400)));
@@ -1786,6 +1791,7 @@
         return { id: c.id, name: c.name, title: c.title, company: c.company, research_state: c.research_state, research_at: c.research_at, research: c.research };
       }),
       research: research.length ? research.join('\n\n').slice(0, 4000) : null,
+      sources: sources.length ? sources.join('\n\n').slice(0, 2600) : null,
       member_ids: ordered.map(function (c) { return c.id; }),
       notes: notes.length ? notes.join('\n').slice(0, 2400) : null,
       handoff_summary: handoff.length ? handoff.join('\n').slice(0, 1600) : null,
@@ -1854,6 +1860,7 @@
       risks: Array.isArray(c.risks) ? c.risks.filter(function (x) { return typeof x === 'string'; }) : [],
       questions: Array.isArray(c.questions) ? c.questions.filter(function (x) { return typeof x === 'string'; }) : [],
       research: typeof c.research === 'string' ? c.research : null,
+      sources: typeof c.sources === 'string' ? c.sources : null,
       research_state: typeof c.research_state === 'string' ? c.research_state : 'none',
       research_at: typeof c.research_at === 'string' ? c.research_at : null,
     };

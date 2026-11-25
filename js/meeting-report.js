@@ -612,11 +612,46 @@
   }
 
   // ─── Transcripción completa ───────────────────────────────
+  // Descarga de la transcripción (2026-11-25, feedback de cliente): un .txt
+  // con la cabecera de la reunión y una línea por intervención. Se arma en el
+  // navegador con lo que ya está en pantalla.
+  var lastTranscript = null;
+  function downloadTranscript() {
+    var data = lastTranscript;
+    var tr = data && Array.isArray(data.transcript) ? data.transcript.filter(function (c) { return c && c.text; }) : [];
+    if (!tr.length) { toast('Esta reunión no tiene transcripción.', 'warn'); return; }
+    var T = function (s) { return (global.i18n && global.i18n.t) ? global.i18n.t(s) : s; };
+    var head = [
+      T('Transcripción de la reunión'),
+      T('Prospecto') + ': ' + (data.prospect_name || '') + (data.prospect_company ? ' — ' + data.prospect_company : ''),
+      T('Vendedor') + ': ' + (data.sdr_name || data.sdr_email || ''),
+      T('Fecha') + ': ' + fmtDate(data.started_at),
+    ];
+    if (data.duration_seconds != null) head.push(T('Duración') + ': ' + fmtDuration(data.duration_seconds));
+    var lines = tr.map(function (c) {
+      var clock = fmtClock(c.ts, data.started_at);
+      return (clock ? '[' + clock + '] ' : '') + (c.speaker || '—') + ': ' + String(c.text).replace(/\s+/g, ' ').trim();
+    });
+    var text = head.join('\r\n') + '\r\n\r\n' + lines.join('\r\n') + '\r\n';
+    var slug = String(data.prospect_name || 'reunion').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'reunion';
+    var day = data.started_at ? new Date(data.started_at).toISOString().slice(0, 10) : '';
+    // BOM: para que Word y el Bloc de notas lean bien los acentos.
+    var url = URL.createObjectURL(new Blob(['\ufeff' + text], { type: 'text/plain;charset=utf-8' }));
+    var a = document.createElement('a');
+    a.href = url; a.download = 'transcripcion-' + slug + (day ? '-' + day : '') + '.txt';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+
   function transcriptBlock(data, opened) {
     var tr = Array.isArray(data.transcript) ? data.transcript.filter(function (c) { return c && c.text; }) : [];
     if (!tr.length) return '';
+    lastTranscript = data;
     var sdrName = String(data.sdr_name || '').trim().toLowerCase();
-    var html = '<details class="mr-details mr-card"' + (opened ? ' open' : '') + '><summary><span class="chev">▶</span><span class="mr-h" style="margin:0">Transcripción completa</span><span class="pill pill-gray" style="font-size:10px">' + tr.length + ' intervenciones</span></summary>';
+    var html = '<details class="mr-details mr-card"' + (opened ? ' open' : '') + '><summary><span class="chev">▶</span><span class="mr-h" style="margin:0">Transcripción completa</span><span class="pill pill-gray" style="font-size:10px">' + tr.length + ' intervenciones</span>' +
+      // En la cabecera: se ve aunque la transcripción esté plegada (y no la despliega).
+      '<button type="button" class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="event.preventDefault();event.stopPropagation();MeetingReport.downloadTranscript()">Descargar transcripción (.txt)</button></summary>';
     html += '<div class="mr-tr notranslate" style="margin-top:12px">';
     tr.forEach(function (c) {
       var sp = String(c.speaker || '');
@@ -668,6 +703,7 @@
   ensureStyle();
 
   global.MeetingReport = {
+    downloadTranscript: downloadTranscript,
     loadList: loadList,
     loadLast: loadList,
     open: open,

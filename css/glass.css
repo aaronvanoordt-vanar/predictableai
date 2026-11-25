@@ -546,6 +546,25 @@ html[data-theme="dark"] .rf-step:hover { box-shadow: inset 0 1px 0 rgba(255,255,
 .mc-rs-dot.is-ok { background: var(--green); }
 .mc-rs-dot.is-run { background: var(--cyan); animation: mcPulse 1.2s ease-in-out infinite; }
 .mc-rs-t { flex: 1; min-width: 180px; }
+.mc-team-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.mc-team-chip { display: inline-flex; align-items: center; border-radius: 999px; background: var(--surface); border: 1px solid var(--glass-edge); overflow: hidden; }
+.mc-team-chip.is-on { background: var(--green-soft); border-color: var(--green); }
+.mc-team-name, .mc-team-x { font: inherit; font-size: 12.5px; background: none; border: 0; color: var(--text2); cursor: pointer; padding: 5px 10px; }
+.mc-team-chip.is-on .mc-team-name { color: var(--green); font-weight: 600; }
+.mc-team-chip.is-on .mc-team-name::before { content: "✓ "; }
+.mc-team-x { padding: 5px 9px 5px 2px; color: var(--text3); }
+.mc-team-name:focus-visible, .mc-team-x:focus-visible, .mc-hist-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 999px; }
+.mc-team-add { display: flex; gap: 8px; }
+.mc-team-add input { flex: 1; min-width: 0; }
+.mc-hist-row { padding: 8px 0; }
+.mc-hist-row + .mc-hist-row { border-top: 1px dashed var(--glass-edge); }
+.mc-hist-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.mc-hist-date { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.mc-hist-chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--surface2); color: var(--text3); }
+.mc-hist-line { font-size: 12.5px; color: var(--text2); line-height: 1.55; }
+.mc-hist-next { font-size: 12.5px; color: var(--text); line-height: 1.55; margin-top: 4px; }
+.mc-hist-next-k { font-weight: 700; color: var(--accent-ink); }
+.mc-hist-open { font: inherit; font-size: 12px; font-weight: 600; color: var(--accent-ink); background: none; border: 0; padding: 0; margin-top: 4px; cursor: pointer; }
 .mc-hud-step { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--text2); }
 .mc-hud-step::before { content: ""; flex: 0 0 8px; height: 8px; border-radius: 50%; background: var(--green); }
 .mc-hud-step.is-off::before { background: var(--ink-4, var(--text3)); }

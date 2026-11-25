@@ -21,10 +21,14 @@
   let everSawChunk = false;   // true en cuanto llega el primer chunk — la sesión ya no debe volver a "conectándose"
   const Live = function () { return global.CoachLive || null; };
   // Quién es el vendedor: en modo bot los hablantes traen su nombre real.
+  // Los compañeros marcados en «Quién entra de tu empresa» también son vendedores.
+  let teamNames = [];
   function isSeller(speaker) {
     const me = String((global.currentProfile && global.currentProfile.full_name) || '').trim().toLowerCase();
     const sp = String(speaker || '').trim().toLowerCase();
-    return sp === 'sdr' || (!!me && (sp === me || sp.indexOf(me) !== -1 || me.indexOf(sp) !== -1));
+    if (!sp) return false;
+    const match = function (n) { return !!n && (sp === n || sp.indexOf(n) !== -1 || (sp.length >= 3 && n.indexOf(sp) !== -1)); };
+    return sp === 'sdr' || match(me) || teamNames.some(match);
   }
 
   // ─── INICIO ───────────────────────────────────────────────
@@ -51,6 +55,7 @@
       });
 
       currentMeetingId = res.meeting_id;
+      teamNames = (Array.isArray(res.team) ? res.team : []).map(function (t) { return String((t && t.name) || '').trim().toLowerCase(); }).filter(Boolean);
       lastSeenTs = null;
       elapsedSeconds = 0;
       lastEventTs = null;
@@ -63,7 +68,7 @@
       hideThinking();
 
       // Fase de apertura y qué decir desde el segundo 0 (js/coach-live.js).
-      if (Live()) Live().begin(prospectContext, { status: 'El asistente se está uniendo…' });
+      if (Live()) Live().begin(prospectContext, { status: 'El asistente se está uniendo…', history: res.history });
       setStatus('connecting');
       // 1,2 s: el poll no debe ser el cuello de botella (getMeetingState es barato).
       pollTimer = setInterval(poll, 1200);
