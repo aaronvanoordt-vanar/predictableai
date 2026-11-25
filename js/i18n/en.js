@@ -7912,4 +7912,7 @@ window.I18N_DICTS.en = Object.assign(window.I18N_DICTS.en || {}, {
   "Nombre de la persona": "Person's name",
   "Es un lead": "It's a lead",
   "Es de mi equipo": "It's from my team",
+  "Fuentes ({0})": "Sources ({0})",
+  "Agregar fuentes": "Add sources",
+  "Enlaces y archivos de este lead o de su empresa para el coach y la investigación": "Links and files about this lead or their company for the coach and research",
 });

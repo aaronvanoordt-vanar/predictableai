@@ -8060,4 +8060,7 @@ window.I18N_DICTS['pt-BR'] = {
   "Nombre de la persona": "Nome da pessoa",
   "Es un lead": "É um lead",
   "Es de mi equipo": "É da minha equipe",
+  "Fuentes ({0})": "Fontes ({0})",
+  "Agregar fuentes": "Adicionar fontes",
+  "Enlaces y archivos de este lead o de su empresa para el coach y la investigación": "Links e arquivos deste lead ou da empresa dele para o coach e a pesquisa",
 };
