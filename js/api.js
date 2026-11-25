@@ -95,6 +95,8 @@
     getLastMeetingReport: (p) => call("getLastMeetingReport", p || {}),
     // Todas las reuniones (propias, o del equipo si eres admin/director)
     listMeetings: (p) => call("listMeetings", p || {}),
+    // Reuniones anteriores con un lead o una lista (el coach arranca desde ahí)
+    leadHistory: (p) => call("leadHistory", p || {}),
     // Reporte de una reunión específica (propia, o del equipo si eres admin/director)
     getMeetingReport: (p) => call("getMeetingReport", p),
     // Modo bot: la transcripción de Recall puede llegar minutos después de

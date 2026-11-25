@@ -3543,6 +3543,8 @@
       '<div class="pros-research-col">' +
         meetingQualitySectionHtml(m) +
         registryPanelHtml(m) +
+        // Fuentes del lead (js/lead-sources.js): enlaces y material para el coach.
+        '<div data-lead-sources="' + id + '"></div>' +
       '</div>' +
       '<div class="pros-research-col">' +
         '<div class="pros-research-head"><span class="pros-lbl">Ángulo e investigación</span>' +
@@ -3821,6 +3823,19 @@
       });
     }
     if (window.VoiceAgent) window.VoiceAgent.mountAll(host);
+    if (window.LeadSources) {
+      window.LeadSources.mountAll(host, {
+        find: findListMember,
+        // Los demás contactos de la misma empresa en esta lista.
+        peers: function (m) {
+          var co = String(m.company || '').trim().toLowerCase();
+          if (!co) return [];
+          return state.listas.members.filter(function (x) {
+            return String(x.id) !== String(m.id) && String(x.list_id) === String(m.list_id) && String(x.company || '').trim().toLowerCase() === co;
+          });
+        },
+      });
+    }
     if (keepNotes) {
       var again = host.querySelector('textarea[data-action="research-notes"][data-id="' + keepNotes.id + '"]');
       if (again) {

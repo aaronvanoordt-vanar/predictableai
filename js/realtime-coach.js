@@ -194,10 +194,16 @@
       });
       currentMeetingId = res.meeting_id;
       active = true;
+      // El servidor devuelve las reuniones anteriores con este lead y el equipo
+      // ya acotado: el camino del worker arma su prompt aquí, así que los guarda.
+      currentProspect = Object.assign({}, prospectContext, {
+        history: Array.isArray(res.history) ? res.history : [],
+        team: Array.isArray(res.team) ? res.team : (prospectContext.team || []),
+      });
 
       clearUI();
       lastStage = '';
-      if (Live()) Live().begin(prospectContext, { status: 'Conectando…' });
+      if (Live()) Live().begin(prospectContext, { status: 'Conectando…', history: currentProspect.history });
       setStatus('connecting');
       elapsedSeconds = 0;
       elapsedTimer = setInterval(updateElapsed, 1000);
@@ -695,7 +701,8 @@
     }
     // Lo que el modelo necesita para ubicar la fase sin releer toda la llamada.
     const minute = Live() ? Live().minutes() : Math.floor(elapsedSeconds / 60);
-    const position = 'Minuto de la llamada: ' + minute + '. Fase anterior: ' + (lastStage || 'rapport (la llamada acaba de empezar)') + '.';
+    const hadMeetings = currentProspect && Array.isArray(currentProspect.history) && currentProspect.history.length;
+    const position = 'Minuto de la llamada: ' + minute + '. Fase anterior: ' + (lastStage || (hadMeetings ? 'la llamada acaba de empezar; continúa desde la reunión anterior' : 'rapport (la llamada acaba de empezar)')) + '.';
 
     if (coachEngine() !== 'openai') {
       try {
@@ -754,7 +761,12 @@
       '}',
       'Español neutro. NO inventes alertas: si no hay nada accionable, "alerts": [].'
     ]).join('\n') + ((trainedPrompt && trainedPrompt.block) ? '\n' + trainedPrompt.block : '') + outputLanguageDirective();
-    const userContent = 'Contexto del prospecto (sus datos, tus notas, la oportunidad del CRM, lo que ya se sabe de conversaciones anteriores y la investigación previa de cada persona; esa investigación es una hipótesis: si el lead dice otra cosa, manda lo que dice el lead):\n' + JSON.stringify(currentProspect || {}).slice(0, 9000) + '\n\n' +
+    // Equipo del vendedor y reuniones anteriores: bloque aparte (espejo corto de
+    // meetingFramingBlock de sales-coach) para que el límite del JSON no lo corte.
+    const cp = currentProspect || {};
+    const leadJson = Object.assign({}, cp); delete leadJson.history; delete leadJson.team;
+    const userContent = 'Contexto del prospecto (sus datos, tus notas, las fuentes que agregaste, la oportunidad del CRM, lo que ya se sabe de conversaciones anteriores y la investigación previa de cada persona; esa investigación es una hipótesis: si el lead dice otra cosa, manda lo que dice el lead):\n' + JSON.stringify(leadJson).slice(0, 9000) + '\n\n' +
+      framingText(cp) +
       position + '\n\n' +
       (prior ? 'Conversación anterior (ya analizada, solo contexto):\n' + prior + '\n\n' : '') +
       'Lo nuevo (analiza solo esto):\n' + fresh;
@@ -797,6 +809,28 @@
     } catch (e) {
       onFailure(e);
     } finally { done(); }
+  }
+
+  function framingText(cp) {
+    const out = [];
+    const team = Array.isArray(cp.team) ? cp.team.filter(function (t) { return t && t.name; }) : [];
+    if (team.length) {
+      out.push('EQUIPO DEL VENDEDOR EN ESTA LLAMADA: además del vendedor participan de SU empresa ' +
+        team.map(function (t) { return t.name; }).join(', ') +
+        '. Son vendedores, NO leads: no les recomiendes venderles ni trates lo que dicen como objeciones o señales de compra. Entran por el audio de la reunión, así que pueden aparecer dentro del canal "Lead": reconócelos por su nombre y por lo que dicen. Todo otro hablante es del lado del lead.');
+    }
+    const hist = Array.isArray(cp.history) ? cp.history.slice(0, 4) : [];
+    if (hist.length) {
+      out.push('REUNIONES ANTERIORES CON ESTAS PERSONAS (esta es la n.º ' + (hist.length + 1) + '; la más reciente primero):');
+      hist.forEach(function (h) {
+        const head = [String(h.date || '').slice(0, 10), h.stage ? 'llegó hasta: ' + h.stage : '', h.outcome ? 'resultado: ' + h.outcome : ''].filter(Boolean).join(' · ');
+        out.push('- ' + head + ' — ' + (Array.isArray(h.summary) ? h.summary.join(' ') : '').slice(0, 600) +
+          (h.next_step && h.next_step.accion ? ' Siguiente paso acordado: ' + h.next_step.accion + (h.next_step.cuando ? ' (' + h.next_step.cuando + ')' : '') + '.' : '') +
+          (Array.isArray(h.objections) && h.objections.length ? ' Objeciones: ' + h.objections.map(function (o) { return o.objection + (o.result ? ' [' + o.result + ']' : ''); }).join(' | ') + '.' : ''));
+      });
+      out.push('ESTA NO ES LA PRIMERA REUNIÓN. No recomiendes presentarse ni repetir el descubrimiento ya hecho: abre retomando el siguiente paso acordado y lo pendiente, y sitúa la fase a partir de donde llegó la anterior. Las objeciones ya superadas no se reabren; las no resueltas sí.');
+    }
+    return out.length ? out.join('\n') + '\n\n' : '';
   }
 
   // Respuesta en streaming (SSE de OpenAI a través del worker). Devuelve el

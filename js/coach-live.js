@@ -508,6 +508,17 @@
     lastLeadAt = 0; lastSdrAt = 0;
     gate = { minUntil: 0, queued: null, queuedAt: 0, timer: null, stream: null, leadWordsAtSay: 0, leadWords: 0 };
     applyStage('rapport');
+    // No es la primera reunión con este lead (sales-coach → context.history): la
+    // apertura retoma lo pendiente en vez de presentarse otra vez.
+    var hist = opts && Array.isArray(opts.history) ? opts.history : [];
+    if (hist.length) {
+      var last = hist[0] || {};
+      var pending = last.next_step && last.next_step.accion ? String(last.next_step.accion) : '';
+      applySay(T('Gracias por volver a reunirnos. Antes de avanzar, ¿qué cambió desde la última vez que hablamos?'),
+        pending ? T('Retoma lo que quedó pendiente:') + ' ' + pending : T('Retoma lo que quedó pendiente de la reunión anterior antes de mostrar algo nuevo.'));
+      state.goal = T('Retomar donde quedó la reunión anterior y confirmar qué cambió.');
+      state.doList = [];
+    }
     if (ticker) clearInterval(ticker);
     ticker = setInterval(watch, 20000);
     if (turnTicker) clearInterval(turnTicker);

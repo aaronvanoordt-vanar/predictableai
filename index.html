@@ -1961,7 +1961,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <!-- Capa experiencial del shell (movimiento, riel, cajón móvil, paleta ⌘K): css/ux.css + js/ux.js -->
 <link rel="stylesheet" href="css/ux.css?v=20260919">
 <!-- Liquid Glass + identidad visual + flujo del dashboard (2026-09-19): css/glass.css + js/dashboard-flow.js -->
-<link rel="stylesheet" href="css/glass.css?v=20260919">
+<link rel="stylesheet" href="css/glass.css?v=20261125b">
 </head>
 <body>
 
@@ -2622,7 +2622,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
           <span class="mc-seq-n notranslate">2</span>
           <div class="mc-seq-body">
             <div class="mc-seq-title">Con quién es la reunión</div>
-            <div class="mc-seq-sub">Elige una persona o una lista completa. Con la investigación de cada una, las recomendaciones salen a su medida.</div>
+            <div class="mc-seq-sub">Elige una persona o una lista completa. Con la investigación de cada una y lo que pasó en sus reuniones anteriores, las recomendaciones salen a su medida.</div>
             <!-- Selector de lead (obligatorio): se llena desde las Listas guardadas de Prospección -->
             <div id="mc-lead-block" class="mc-seq-slot">
               <label for="mc-lead-select" class="mc-label">Lead o lista de esta reunión</label>
@@ -2635,7 +2635,11 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
               </div>
               <!-- Cuántas personas ya tienen investigación (js/coach-research.js). -->
               <div id="mc-research-summary" class="mc-research-summary" style="display:none"></div>
+              <!-- Reuniones anteriores con estas personas (js/coach-setup.js). -->
+              <div id="mc-history-summary" class="mc-research-summary" style="display:none"></div>
             </div>
+            <!-- Quién entra del lado del vendedor (js/coach-setup.js): los demás son leads. -->
+            <div id="mc-team" class="mc-seq-slot mc-team"></div>
           </div>
         </li>
 
@@ -2716,6 +2720,16 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
         <div id="mc-brief-research-sec" class="mc-brief-sec" style="display:none">
           <div class="mc-brief-k">Investigación con IA</div>
           <div id="mc-brief-research"></div>
+        </div>
+        <!-- Reuniones anteriores con este lead (js/coach-setup.js): el coach arranca desde ahí. -->
+        <div id="mc-brief-history-sec" class="mc-brief-sec" style="display:none">
+          <div class="mc-brief-k">Reuniones anteriores</div>
+          <div id="mc-brief-history"></div>
+        </div>
+        <!-- Fuentes que agregaste en Listas → Investigación (js/lead-sources.js). -->
+        <div id="mc-brief-sources-sec" class="mc-brief-sec" style="display:none">
+          <div class="mc-brief-k">Fuentes del lead</div>
+          <div id="mc-brief-sources" class="notranslate mc-brief-v"></div>
         </div>
         <div id="mc-brief-known-sec" class="mc-brief-sec" style="display:none">
           <div class="mc-brief-k">Lo que ya sabes</div>
@@ -3300,11 +3314,12 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/api.js?v=20261116"></script>
 <script src="js/apollo-enums.js"></script>
 <script src="js/company-context.js?v=20260823"></script>
-<script src="js/prospecting-data.js?v=20261124b"></script>
+<script src="js/lead-sources.js?v=20261125b"></script>
+<script src="js/prospecting-data.js?v=20261125b"></script>
 <script src="js/phone-latam.js?v=20261018"></script>
 <script src="js/phone-lines.js?v=20261018"></script>
 <script src="js/ai-columns.js?v=20261117"></script>
-<script src="js/prospecting.js?v=20261124b"></script>
+<script src="js/prospecting.js?v=20261125b"></script>
 <script src="js/voice-agent.js?v=20261018"></script>
 <script src="js/registry-search.js?v=20261017"></script>
 <script src="js/apollo-search-url.js?v=20261020"></script>
@@ -3330,13 +3345,14 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/agency.js?v=20261124b"></script>
 <!-- AI Sales Coach en vivo: playbook por fase → ventana flotante y capa instantánea → los dos caminos (bot / captura local) -->
 <script src="js/coach-playbook.js?v=20261116"></script>
-<script src="js/coach-live.js?v=20261116f"></script>
-<script src="js/meeting-coach.js?v=20261116"></script>
-<script src="js/realtime-coach.js?v=20261117"></script>
+<script src="js/coach-live.js?v=20261125b"></script>
+<script src="js/meeting-coach.js?v=20261125b"></script>
+<script src="js/realtime-coach.js?v=20261125b"></script>
+<script src="js/coach-setup.js?v=20261125b"></script>
 <script src="js/coach-calendar.js?v=20261116f"></script>
 <script src="js/dialer.js?v=20261018"></script>
 <script src="js/calls.js?v=20261018b"></script>
-<script src="js/meeting-report.js?v=20261116"></script>
+<script src="js/meeting-report.js?v=20261125b"></script>
 <script src="js/learning.js?v=20261017"></script>
 <script src="js/ai-training.js?v=20261117"></script>
 <script src="js/linkedin-content.js?v=20261017"></script>
@@ -3348,7 +3364,7 @@ html[data-theme="dark"] { --sk-sheen: rgba(255,255,255,0.06); }
 <script src="js/team.js?v=20261018b"></script>
 <script src="js/crm.js?v=20261019"></script>
 <script src="js/coach-lead-picker.js?v=20261117"></script>
-<script src="js/coach-research.js?v=20261117"></script>
+<script src="js/coach-research.js?v=20261125b"></script>
 <!-- Intelligence Hub: intel-hub-cadence-tabs.js es la única implementación (las generaciones viejas fueron eliminadas del repo) -->
 <script src="js/intel-hub-cadence-tabs.js?v=20261023"></script>
 <script src="js/context-gate.js?v=20261018c"></script>
@@ -3485,6 +3501,8 @@ function coachShowIdle() {
   const startBtn = document.getElementById('mc-start-btn');
   if (startBtn) startBtn.disabled = false;
   paintCoachHudStep();
+  // Tras una reunión, la próxima elección relee las reuniones anteriores.
+  if (window.CoachSetup) window.CoachSetup.reset();
   window.__coachActiveMode = null;
   // Sin sesión viva (no arrancó o ya terminó) la ventana flotante no tiene qué mostrar.
   if (window.CoachHUD && !(window.CoachLive && window.CoachLive.isLive())) window.CoachHUD.close();
@@ -3549,6 +3567,12 @@ function loadCoachBrief(ctx) {
     if (sec) sec.style.display = arr.length ? 'block' : 'none';
     if (el) el.innerHTML = arr.map(x => '<li>' + esc(x) + '</li>').join('');
   };
+  const srcSec = document.getElementById('mc-brief-sources-sec');
+  const srcEl = document.getElementById('mc-brief-sources');
+  if (srcSec) srcSec.style.display = ctx.sources ? 'block' : 'none';
+  if (srcEl) srcEl.textContent = ctx.sources || '';
+  if (window.CoachSetup) window.CoachSetup.onLead(ctx);
+
   list('mc-brief-risks-sec', 'mc-brief-risks', ctx.risks);
   list('mc-brief-ask-sec', 'mc-brief-ask', ctx.questions);
   if (window.CoachResearch) window.CoachResearch.render(ctx);
@@ -3570,6 +3594,10 @@ function coachProspectPayload(ctx) {
     opportunity: ctx.opportunity || null,
     // Investigación con IA de cada persona (lead-research, 2026-11-17).
     research: ctx.research || null,
+    // Fuentes que el vendedor agregó en Listas (enlaces, notas y texto de sus archivos).
+    sources: ctx.sources || null,
+    // Compañeros que entran del lado del vendedor (js/coach-setup.js): los demás son leads.
+    team: window.CoachSetup ? window.CoachSetup.team() : [],
     risks: Array.isArray(ctx.risks) ? ctx.risks : [],
     questions: Array.isArray(ctx.questions) ? ctx.questions : [],
     // Reunión con una lista completa: quiénes participan (sales-coach pasa a
