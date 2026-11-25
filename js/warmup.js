@@ -523,12 +523,17 @@
 
   function linkedinCard2(c) {
     if (!c || !c.connected) return offCard('LinkedIn', 'Canales → LinkedIn');
+    // Varias cuentas de LinkedIn: una tarjeta por cuenta, cada una con su rampa y sus topes.
+    if (Array.isArray(c.accounts) && c.accounts.length > 1) return c.accounts.map(linkedinAccountCard).join('');
+    return linkedinAccountCard(c);
+  }
+  function linkedinAccountCard(c) {
     if (c.external) return '<div class="wu-card wu-acc">' + channelHead('LinkedIn', 'Dripify', '') + '<div class="wu-muted">' + esc(c.external) + '</div></div>';
     var v = c.verdict, t = c.today || {};
     var html = '<div class="wu-card wu-acc">' + channelHead('LinkedIn', v.can_send ? 'Hoy sí envía' : 'Hoy no envía', v.can_send ? 'ok' : 'bad', c.label) +
       '<div class="wu-muted">' + esc(STATE_TEXT[v.state] || '') + '</div>' + verdictBlock(v, 'invitaciones');
     if (t.messages) html += '<div class="wu-muted">Mensajes: ' + num(t.messages.used) + ' de ' + num(t.messages.cap) + ' hoy · Invitaciones en 7 días: ' + num(t.week.used) + ' de ' + num(t.week.cap) + '</div>';
-    return html + overrideBlock('linkedin', v) + '</div>';
+    return html + overrideBlock('linkedin', v, c.account_id ? ' data-account="' + esc(c.account_id) + '"' : '') + '</div>';
   }
 
   function guardHtml() {
@@ -624,10 +629,10 @@
     if (kind === 'override-on') {
       var risk = scope && scope.querySelector('[data-wu-risk]');
       if (!risk || !risk.checked) return void toast('Marca la casilla para aceptar el riesgo.', 'warn');
-      return void act({ action: 'override', channel: t.getAttribute('data-channel'), mailbox_id: t.getAttribute('data-id') || undefined, on: true, accept_risk: true }, 'Calentamiento omitido bajo tu riesgo.');
+      return void act({ action: 'override', channel: t.getAttribute('data-channel'), mailbox_id: t.getAttribute('data-id') || undefined, account_id: t.getAttribute('data-account') || undefined, on: true, accept_risk: true }, 'Calentamiento omitido bajo tu riesgo.');
     }
     if (kind === 'override-off') {
-      return void act({ action: 'override', channel: t.getAttribute('data-channel'), mailbox_id: t.getAttribute('data-id') || undefined, on: false }, 'Calentamiento activado de nuevo.');
+      return void act({ action: 'override', channel: t.getAttribute('data-channel'), mailbox_id: t.getAttribute('data-id') || undefined, account_id: t.getAttribute('data-account') || undefined, on: false }, 'Calentamiento activado de nuevo.');
     }
     if (kind === 'wa-warmup-on') {
       var cost = card && card.querySelector('[data-wu-cost]');

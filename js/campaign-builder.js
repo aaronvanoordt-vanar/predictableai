@@ -660,6 +660,38 @@
     function dripifyOk() { return o.channelConnected ? !!o.channelConnected('linkedin') : !!(o.dripify && o.dripify.status === 'connected'); }
     function dripifyCampaigns() { return (o.dripify && o.dripify.config && o.dripify.config.campaigns) || []; }
     // LinkedIn nativo (Unipile): la cuenta de LinkedIn propia conectada.
+    /**
+     * Con qué cuentas de LinkedIn sale esta campaña. Escribe en
+     * sender.linkedin_account_ids (campaign-run lo lee): ninguna marcada = la
+     * cuenta principal; con varias, cada lead queda con una al azar, en partes
+     * iguales, y sigue con ella toda la cadencia.
+     */
+    function linkedinAccountPicker(accs) {
+      var sender = st.draft.sender || (st.draft.sender = {});
+      var known = accs.map(function (a) { return String(a.id); });
+      var chosen = (Array.isArray(sender.linkedin_account_ids) ? sender.linkedin_account_ids.map(String) : []).filter(function (id) { return known.indexOf(id) !== -1; });
+      var card = h('div', { class: 'chart-card' });
+      card.appendChild(h('div', { class: 'cb-lbl', text: 'Cuentas de LinkedIn de esta campaña' }));
+      var boxes = h('div', { class: 'cmp-check', style: 'margin-top:6px' });
+      accs.forEach(function (a) {
+        var cb = h('input', { type: 'checkbox', value: a.id });
+        cb.checked = chosen.indexOf(String(a.id)) !== -1;
+        cb.addEventListener('change', function () {
+          sender.linkedin_account_ids = Array.prototype.slice.call(boxes.querySelectorAll('input[type=checkbox]:checked')).map(function (x) { return x.value; });
+          render();
+        });
+        boxes.appendChild(h('label', { style: 'display:flex;gap:8px;align-items:center;font:inherit;text-transform:none;letter-spacing:0;color:inherit;padding:3px 0;cursor:pointer' }, cb,
+          h('span', { class: 'notranslate', 'data-no-i18n': '1', text: a.name }), a.ok ? null : h('span', { class: 'cb-hint', text: '(necesita atención)' })));
+      });
+      card.appendChild(boxes);
+      var hint = !chosen.length
+        ? 'Ninguna marcada: sale todo desde tu cuenta principal (' + accs[0].name + ').'
+        : chosen.length === 1
+          ? 'Todos los leads de esta campaña salen desde esa cuenta.'
+          : 'Prueba A/B: los leads se reparten al azar en partes iguales entre las ' + chosen.length + ' cuentas y cada lead sigue siempre con la misma. Compara el resultado en el detalle de la campaña con el filtro «Cuenta de LinkedIn».';
+      card.appendChild(h('div', { class: 'cb-hint', style: 'margin-top:6px', text: hint }));
+      return card;
+    }
     function nativeOk() { return typeof o.linkedinNative === 'function' ? !!o.linkedinNative() : !!o.linkedinNative; }
     function dripifyConnected() { return !!(o.dripify && o.dripify.status === 'connected'); }
     function ownLinkedinCampaigns() { return (typeof o.linkedinCampaigns === 'function' ? o.linkedinCampaigns() : o.linkedinCampaigns) || []; }
@@ -1835,6 +1867,11 @@
         }
         right.appendChild(mb);
       }
+
+      // Cuentas de LinkedIn de ESTA campaña (solo con más de una conectada):
+      // con varias marcadas, los leads se reparten entre ellas (prueba A/B).
+      var liAccs = liNativeSends && typeof o.linkedinAccounts === 'function' ? (o.linkedinAccounts() || []) : [];
+      if (liAccs.length > 1) right.appendChild(linkedinAccountPicker(liAccs));
 
       var warns = [];
       if (needs.whatsapp && !watiOk()) warns.push('WhatsApp no está conectado: esos pasos se reintentan cada 6 h hasta que lo conectes.');

@@ -178,7 +178,10 @@
     metaSignup: null,          // {app_id, config_id, graph_version} o null si Meta no está configurado
     metaWabaId: '',            // ID de WABA escrito a mano (respaldo si Meta no informa la cuenta)
     dripify: null,
-    unipile: null,             // LinkedIn nativo: la cuenta de LinkedIn propia (Unipile)
+    unipile: null,             // LinkedIn nativo: la cuenta de LinkedIn principal (Unipile)
+    unipileAccounts: [],       // todas las cuentas de LinkedIn conectadas (2026-11-25: puede haber varias)
+    liMax: 5,                  // máximo de cuentas de LinkedIn por usuario (linkedin_max_accounts)
+    liSel: null,               // cuenta de LinkedIn abierta en Canales → LinkedIn
     liNative: false,           // linkedin_native_available (Unipile configurado en la plataforma)
     apollo: null,
     apolloOauth: false,        // apollo_oauth_available
@@ -748,13 +751,55 @@
     if (wh.registered || wh.confirmed || wh.verified || wh.last_received_at) return true;
     return state.inbox.some(function (m) { return m.provider === 'dripify'; });
   }
+  // ── Cuentas de LinkedIn propias (puede haber varias, 2026-11-25) ─────────
+  /** Las cuentas de LinkedIn conectadas (también las que tienen un problema), la principal primero. */
+  function liAccounts() { return state.unipileAccounts || []; }
+  function liAccountOk(acc) {
+    var cfg = (acc && acc.config) || {};
+    return isConn(acc) && !(cfg.send_block && !cfg.send_block.until);
+  }
+  function liAccountName(acc) {
+    var cfg = (acc && acc.config) || {};
+    return cfg.name || cfg.public_identifier || 'LinkedIn';
+  }
+  function liAccountById(id) {
+    return liAccounts().filter(function (a) { return String(a.id) === String(id); })[0] || null;
+  }
+  /**
+   * Guarda lo que devuelve channel-connect. `state.unipile` sigue siendo «la»
+   * cuenta para todo lo que solo pregunta si hay LinkedIn propio: una que
+   * puede enviar si existe; si no, la primera.
+   */
+  function setLinkedinAccounts(list, single) {
+    var all = (Array.isArray(list) ? list : (single ? [single] : [])).filter(function (a) { return a && a.status !== 'disconnected'; });
+    state.unipileAccounts = all;
+    state.unipile = all.filter(isConn)[0] || all[0] || null;
+    if (state.liSel && !liAccountById(state.liSel)) state.liSel = null;
+  }
+  /** Aplica la respuesta de una acción de LinkedIn (trae `accounts`; una función anterior solo `account`). */
+  function applyLinkedinResponse(r) {
+    if (r && Array.isArray(r.accounts)) return setLinkedinAccounts(r.accounts);
+    if (r && r.account) {
+      var rest = liAccounts().filter(function (a) { return String(a.id) !== String(r.account.id); });
+      setLinkedinAccounts(rest.concat([r.account]).sort(function (a, b) { return String(a.created_at || '').localeCompare(String(b.created_at || '')); }));
+    }
+  }
+
   function liState() {
     if (state.status === undefined) return { state: 'loading' };
     // La cuenta propia (Unipile) en error sigue siendo "la conectada": el
     // detalle dice qué pasa y cómo reconectar, en vez de ofrecer conectarla de cero.
     if (state.unipile) {
+      var accs = liAccounts();
+      var bad = accs.filter(function (a) { return !liAccountOk(a); });
+      if (accs.length > 1) {
+        // Varias cuentas: el canal está bien si todas pueden enviar.
+        return { state: 'connected', webhookOk: !bad.length, detail: bad.length
+          ? (bad.length === 1 ? 'Revisa la cuenta ' + liAccountName(bad[0]) : 'Revisa ' + bad.length + ' de tus ' + accs.length + ' cuentas')
+          : accs.length + ' cuentas: ' + accs.map(liAccountName).join(', ') };
+      }
       var ucfg = state.unipile.config || {};
-      var ok = isConn(state.unipile) && !(ucfg.send_block && !ucfg.send_block.until);
+      var ok = liAccountOk(state.unipile);
       return { state: 'connected', detail: ok ? 'Tu cuenta' + (ucfg.name ? ': ' + ucfg.name : '') : (state.unipile.last_error || 'Vuelve a conectar tu cuenta'), webhookOk: ok };
     }
     if (!isConn(state.dripify)) return { state: 'disconnected' };
@@ -821,7 +866,8 @@
       // Respaldo para un channel-connect anterior a `whatsapp`: la de WATI.
       state.wati = r && r.whatsapp !== undefined ? r.whatsapp : state.watiRow;
       state.dripify = r && r.dripify ? r.dripify : null;
-      state.unipile = r && r.unipile && r.unipile.status !== 'disconnected' ? r.unipile : null;
+      setLinkedinAccounts(r && r.unipile_accounts, r && r.unipile);
+      state.liMax = (r && Number(r.linkedin_max_accounts)) || 5;
       state.liNative = !!(r && r.linkedin_native_available === true);
       state.apollo = r && r.apollo ? r.apollo : null;
       state.apolloOauth = !!(r && r.apollo_oauth_available === true);
@@ -829,7 +875,7 @@
       notifyGuardOnConnect();
     } catch (e) {
       state.status = null;
-      state.wati = null; state.watiRow = null; state.metaRow = null; state.metaSignup = null; state.dripify = null; state.unipile = null; state.apollo = null;
+      state.wati = null; state.watiRow = null; state.metaRow = null; state.metaSignup = null; state.dripify = null; state.unipile = null; state.unipileAccounts = []; state.apollo = null;
       state.apolloOauth = false;
       state.statusError = errMsg(e);
     }
@@ -2801,7 +2847,12 @@
   }
 
   // ── Conexión: LinkedIn (asistente) ───────────────────────────────────────
-  function openLinkedInWizard(startStep) {
+  /**
+   * `target`: { add: true } conecta OTRA cuenta de LinkedIn; { accountId } vuelve
+   * a conectar esa; sin él, la principal (o la primera si no hay ninguna).
+   */
+  function openLinkedInWizard(startStep, target) {
+    target = target || {};
     var api = openModal({ title: 'Conectar LinkedIn', width: 560 });
     function choice() {
       api.setTitle('Conectar LinkedIn');
@@ -2819,9 +2870,10 @@
       api.setActions([{ label: 'Cancelar' }]);
     }
     function native() {
-      api.setTitle('Conectar tu cuenta de LinkedIn');
+      api.setTitle(target.add ? 'Conectar otra cuenta de LinkedIn' : 'Conectar tu cuenta de LinkedIn');
       api.body.innerHTML = '';
       var card = h('div', { class: 'cmp-wz-card' });
+      if (target.add) card.appendChild(h('p', { text: 'Inicia sesión con un perfil de LinkedIn distinto de los que ya conectaste. Si tu navegador tiene abierta otra sesión de LinkedIn no importa: el inicio de sesión ocurre en la ventana del proveedor. Cada cuenta tiene sus propios topes y su propio calentamiento.' }));
       card.appendChild(h('p', { text: 'Se abre una ventana segura de nuestro proveedor de conexión, donde inicias sesión en LinkedIn. Tu contraseña no pasa por Predictable.' }));
       card.appendChild(h('p', { text: 'Para cuidar tu cuenta, Predictable envía como máximo 20 invitaciones por día (100 por semana) y 50 mensajes por día, solo dentro del horario de cada campaña y con varios minutos entre envíos. Las dos primeras semanas va a la mitad.' }));
       api.body.appendChild(card);
@@ -2836,11 +2888,12 @@
           // La ventana se abre en el clic (si no, el navegador la bloquea) y
           // se dirige al link cuando el servidor lo devuelve.
           var popup = window.open('', 'predictable-linkedin', 'width=520,height=720');
-          return edgeFetch(FN_CHANNEL, { action: 'linkedin_auth_url', payload: { return_url: linkedinReturnUrl() } }).then(function (r) {
+          return edgeFetch(FN_CHANNEL, { action: 'linkedin_auth_url', payload: { return_url: linkedinReturnUrl(), add: target.add === true, account_id: target.accountId || undefined } }).then(function (r) {
             // La cuenta ya estaba conectada en el proveedor: se recuperó sin otro login.
             if (r && r.account) {
               if (popup && !popup.closed) popup.close();
-              state.unipile = r.account;
+              applyLinkedinResponse(r);
+              state.liSel = r.account.id;
               m.close();
               var cn = (r.account.config && r.account.config.name) || '';
               toast(cn ? 'LinkedIn conectado: ' + cn + '. Tu cuenta ya estaba activa, no hizo falta volver a iniciar sesión.' : 'LinkedIn conectado. Tu cuenta ya estaba activa, no hizo falta volver a iniciar sesión.', 'success');
@@ -2850,7 +2903,7 @@
             if (!r || !r.url) throw new Error('No se pudo abrir la conexión con LinkedIn.');
             if (popup && !popup.closed) popup.location.href = r.url; else location.href = r.url;
             m.close();
-            waitForLinkedin();
+            waitForLinkedin(target);
           }, function (e) { if (popup && !popup.closed) popup.close(); throw e; });
         } },
       ]);
@@ -2898,15 +2951,20 @@
    * linkedin_refresh, que además la busca si el aviso no llegó) hasta verla.
    */
   var liWaiting = null;
-  function waitForLinkedin() {
+  function waitForLinkedin(target) {
     if (liWaiting) return liWaiting;
+    target = target || {};
     toast('Inicia sesión en LinkedIn en la ventana que se abrió.', 'info');
     var tries = 0;
+    // Al agregar una cuenta se espera una que no estaba; al reconectar, esa misma.
+    var before = {};
+    liAccounts().forEach(function (a) { before[String(a.id)] = true; });
+    var expectNew = target.add === true || !liAccounts().length;
     liWaiting = new Promise(function (resolve) {
       function again(ms) {
         if (tries >= 40) {
           liWaiting = null;
-          toast('Todavía no vemos la conexión de LinkedIn. Si ya iniciaste sesión, vuelve a abrir Campañas en un minuto.', 'warn');
+          toast('Todavía no vemos la conexión de LinkedIn. Si ya iniciaste sesión, vuelve a abrir Canales en un minuto.', 'warn');
           return resolve(null);
         }
         setTimeout(tick, ms);
@@ -2914,12 +2972,23 @@
       function tick() {
         tries++;
         edgeFetch(FN_CHANNEL, { action: 'linkedin_refresh', payload: {} }).then(function (r) {
-          var acc = r && r.account;
-          if (!acc || acc.status === 'disconnected') return again(tries < 10 ? 3000 : 8000);
-          state.unipile = acc;
+          var list = (r && Array.isArray(r.accounts) ? r.accounts : (r && r.account ? [r.account] : [])).filter(function (a) { return a && a.status !== 'disconnected'; });
+          var acc = expectNew
+            ? list.filter(function (a) { return !before[String(a.id)]; })[0]
+            : list.filter(function (a) { return target.accountId ? String(a.id) === String(target.accountId) : true; })[0];
+          if (r && r.limit_message) {
+            liWaiting = null;
+            applyLinkedinResponse(r);
+            toast(r.limit_message, 'warn');
+            render();
+            return resolve(null);
+          }
+          if (!acc) return again(tries < 10 ? 3000 : 8000);
+          applyLinkedinResponse(r);
+          state.liSel = acc.id;
           liWaiting = null;
           var good = acc.status === 'connected';
-          toast(good ? 'LinkedIn conectado: tus campañas ya pueden enviar desde tu cuenta.' : (acc.last_error || 'LinkedIn quedó conectado con un problema: revisa el canal.'), good ? 'success' : 'warn');
+          toast(good ? 'LinkedIn conectado: ' + liAccountName(acc) + '. Tus campañas ya pueden enviar desde esa cuenta.' : (acc.last_error || 'LinkedIn quedó conectado con un problema: revisa el canal.'), good ? 'success' : 'warn');
           render();
           resolve(acc);
         }, function () { again(8000); });
@@ -3054,21 +3123,21 @@
   }
 
   // ── Detalles por canal (modal) ───────────────────────────────────────────
-  function disconnectChannel(key, provider, api) {
+  function disconnectChannel(key, provider, api, accountId) {
     var labels = {
       whatsapp: 'Las campañas con pasos de WhatsApp dejarán de enviar hasta que vuelvas a conectar el canal. Las plantillas creadas en tu cuenta no se borran.',
       linkedin: provider === 'unipile'
-        ? 'Los pasos de LinkedIn que salen desde tu cuenta dejarán de enviar hasta que vuelvas a conectarla, y ya no podrás responder por LinkedIn desde la Bandeja. Lo enviado y las conversaciones guardadas se quedan.'
+        ? 'Los pasos de LinkedIn que salen desde esta cuenta dejarán de enviar hasta que vuelvas a conectarla, y ya no podrás responder desde ella en la Bandeja. Lo enviado y las conversaciones guardadas se quedan.'
         : 'Los pasos de LinkedIn dejarán de enrolar leads hasta que vuelvas a conectar el canal. Lo ya enrolado en tu cuenta de automatización sigue allá.',
       email: 'Buscar vuelve a los datos integrados de Predictable (sin búsqueda de empresas) y las campañas que envían con Apollo dejarán de enviar email hasta que vuelvas a conectar tu cuenta. Tus buzones propios siguen conectados.',
     };
     if (api) api.close();
     return confirmModal({
-      title: key === 'email' ? 'Desconectar Apollo' : 'Desconectar ' + CH[key].label, danger: true, confirmLabel: 'Desconectar',
+      title: key === 'email' ? 'Desconectar Apollo' : accountId && liAccountById(accountId) ? 'Desconectar ' + liAccountName(liAccountById(accountId)) : 'Desconectar ' + CH[key].label, danger: true, confirmLabel: 'Desconectar',
       message: labels[key],
       onConfirm: function () {
-        return edgeFetch(FN_CHANNEL, { action: 'disconnect', provider: provider, payload: { provider: provider } }).then(function () {
-          if (key === 'linkedin' && provider === 'unipile') state.unipile = null;
+        return edgeFetch(FN_CHANNEL, { action: 'disconnect', provider: provider, payload: { provider: provider, account_id: accountId || undefined } }).then(function (r) {
+          if (key === 'linkedin' && provider === 'unipile') { if (r && Array.isArray(r.accounts)) setLinkedinAccounts(r.accounts); else setLinkedinAccounts([]); }
           else if (key === 'linkedin') state.dripify = null;
           if (key === 'email') { state.apollo = null; state.emailAccounts = null; }
           if (key === 'email') notifyApolloStatus();
@@ -3626,7 +3695,31 @@
   /** Detalle de la cuenta de LinkedIn propia (Unipile): estado, topes y desconexión. */
   function renderLinkedinNativeDetails(api) {
     var body = api.body;
-    var acc = state.unipile;
+    var accs = liAccounts();
+    var acc = liAccountById(state.liSel) || state.unipile;
+    // Varias cuentas: una pestaña por cuenta y, debajo, la configuración de la elegida.
+    var canAdd = state.liNative && accs.length < state.liMax;
+    if (accs.length > 1) {
+      var tabs = h('div', { class: 'cmp-row', style: 'flex-wrap:wrap;gap:8px;margin-bottom:12px', role: 'tablist', 'aria-label': 'Cuentas de LinkedIn' });
+      accs.forEach(function (a) {
+        var on = String(a.id) === String(acc.id);
+        var b = h('button', { type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false', class: 'btn btn-sm' + (on ? ' btn-primary' : ''), onclick: function () { state.liSel = a.id; fillChannelDetails('linkedin', api); } },
+          h('span', { class: 'notranslate', 'data-no-i18n': '1', text: liAccountName(a) }), liAccountOk(a) ? null : h('span', { style: 'margin-left:4px', text: '· revisar' }));
+        tabs.appendChild(b);
+      });
+      body.appendChild(tabs);
+    }
+    var addRow = h('div', { class: 'pros-hint', style: 'margin-bottom:10px' });
+    if (canAdd) {
+      addRow.appendChild(h('button', { type: 'button', class: 'btn btn-sm', text: '+ Conectar otra cuenta de LinkedIn', onclick: function () { if (api.close) api.close(); openLinkedInWizard('native', { add: true }); } }));
+      addRow.appendChild(document.createTextNode(' '));
+      addRow.appendChild(h('span', { text: accs.length > 1
+        ? 'En cada campaña eliges con qué cuentas sale LinkedIn; con varias, los leads se reparten en partes iguales (prueba A/B).'
+        : 'Con más de una cuenta puedes elegir en cada campaña con cuáles sale LinkedIn y repartir los leads entre ellas (prueba A/B).' }));
+    } else if (state.liNative) {
+      addRow.appendChild(h('span', { text: 'Tienes ' + accs.length + ' cuentas de LinkedIn conectadas, que es el máximo. Desconecta una para agregar otra.' }));
+    }
+    if (addRow.childNodes.length) body.appendChild(addRow);
     var cfg = acc.config || {};
     var lim = (state.status && state.status.linkedin_limits) || { invites_per_day: 20, invites_per_week: 100, messages_per_day: 50 };
     var block = cfg.send_block && cfg.send_block.reason ? cfg.send_block : null;
@@ -3672,16 +3765,16 @@
         var risky = aboveRec();
         if (risky && !riskBox.checked) { toast('Para subir un tope por encima de lo recomendado, marca la casilla de riesgo.', 'error'); return; }
         m.setBusy(true);
-        return edgeFetch(FN_CHANNEL, { action: 'linkedin_limits', payload: { invites_per_day: invD.value, invites_per_week: invW.value, messages_per_day: msgD.value, accept_risk: risky && riskBox.checked } }).then(function (r) {
-          if (r && r.account) state.unipile = r.account;
+        return edgeFetch(FN_CHANNEL, { action: 'linkedin_limits', payload: { account_id: acc.id, invites_per_day: invD.value, invites_per_week: invW.value, messages_per_day: msgD.value, accept_risk: risky && riskBox.checked } }).then(function (r) {
+          applyLinkedinResponse(r);
           m.close();
           toast(r && r.clamped ? 'Topes de LinkedIn guardados. Uno superaba el máximo y se guardó en el máximo permitido.' : 'Topes de LinkedIn guardados.', 'success');
           render();
         });
       } },
-      { label: 'Volver a conectar', onClick: function (m) { m.close(); openLinkedInWizard('native'); } },
+      { label: 'Volver a conectar', onClick: function (m) { m.close(); openLinkedInWizard('native', { accountId: acc.id }); } },
     ];
-    actions.push({ label: 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('linkedin', 'unipile', m); } });
+    actions.push({ label: accs.length > 1 ? 'Desconectar esta cuenta' : 'Desconectar', className: 'logout-btn logout-btn-confirm', onClick: function (m) { return disconnectChannel('linkedin', 'unipile', m, acc.id); } });
     actions.push({ label: 'Cerrar' });
     api.setActions(actions);
   }
@@ -3855,6 +3948,8 @@
       wati: state.wati,
       dripify: state.dripify,
       linkedinNative: function () { return isConn(state.unipile); },
+      // Cuentas de LinkedIn conectadas: con más de una, la campaña elige con cuáles sale.
+      linkedinAccounts: function () { return liAccounts().map(function (a) { return { id: a.id, name: liAccountName(a), ok: liAccountOk(a) }; }); },
       emailAccounts: state.emailAccounts,
       loadEmailAccounts: loadEmailAccounts,
       defaultEmailAccount: def ? { id: def.id, email: def.email || '' } : null,
@@ -3961,6 +4056,8 @@
       mode: mode, h: h, esc: esc, toast: toast,
       campaigns: campaigns.map(campaignMeta),
       lists: (state.lists || []).map(function (l) { return { id: l.id, name: l.name }; }),
+      // Para el filtro «Cuenta de LinkedIn» (la principal primero).
+      linkedinAccounts: liAccounts().map(function (a) { return { id: a.id, name: liAccountName(a) }; }),
       onOpenCampaign: function (id) { openCampaign(id); },
     });
     return host;

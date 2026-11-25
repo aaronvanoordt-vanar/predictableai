@@ -25,6 +25,7 @@
  */
 
 import { linkedinSlug } from "./dripify.ts";
+import { activeCount, loadAccounts, matchRow, maxAccounts } from "./linkedin-accounts.ts";
 
 // deno-lint-ignore no-explicit-any
 export type Json = any;
@@ -487,33 +488,65 @@ export function humanError(e: unknown): string {
 // deno-lint-ignore no-explicit-any
 type Db = any;
 
-export async function saveAccount(db: Db, userId: string, acc: UnipileAccount, now = new Date()): Promise<Json> {
-  const { data: prev } = await db.from("channel_accounts").select("id, config, webhook_secret, secret").eq("user_id", userId).eq("provider", "unipile").maybeSingle();
+/** El usuario ya tiene el máximo de cuentas de LinkedIn conectadas. */
+export class LinkedinAccountLimitError extends Error {
+  max: number;
+  constructor(max: number) {
+    super(`Ya tienes ${max} cuentas de LinkedIn conectadas, que es el máximo. Desconecta una para agregar otra.`);
+    this.max = max;
+  }
+}
+
+/**
+ * Guarda la cuenta que avisa Unipile en la fila que le corresponde
+ * (linkedin-accounts.ts `matchRow`: mismo id, o mismo perfil de LinkedIn) o,
+ * si es una cuenta nueva, en una fila nueva: un usuario puede tener varias
+ * cuentas de LinkedIn (2026-11-25). `targetRowId` fuerza la fila (reconectar
+ * esa cuenta) cuando la cuenta no calza con ninguna otra.
+ */
+export async function saveAccount(db: Db, userId: string, acc: UnipileAccount, now = new Date(), targetRowId: string | null = null): Promise<Json> {
+  const rows = await loadAccounts(db, userId);
+  let prev: Json | null = matchRow(rows, acc);
+  if (!prev && targetRowId) prev = rows.find((r) => String(r.id) === targetRowId) ?? null;
   const sameAccount = prev?.secret && prev.secret === acc.id;
   const config: Json = {
     ...(prev?.config ?? {}),
-    name: acc.name,
-    public_identifier: acc.publicIdentifier,
-    provider_id: acc.providerId,
+    name: acc.name || prev?.config?.name || "",
+    public_identifier: acc.publicIdentifier || prev?.config?.public_identifier || "",
+    provider_id: acc.providerId || prev?.config?.provider_id || "",
     premium: acc.premium,
     account_status: acc.status,
-    // Una cuenta nueva arranca a la mitad de los topes (calentamiento).
+    // Una cuenta nueva arranca con los topes de calentamiento.
     connected_at: sameAccount && prev?.config?.connected_at ? prev.config.connected_at : now.toISOString(),
     status_checked_at: now.toISOString(),
   };
   // Reconectar resuelve la restricción o el checkpoint que la retenía.
   if (accountUsable(acc.status)) delete config.send_block;
-  const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
-  const { data, error } = await db.from("channel_accounts").upsert({
-    user_id: userId,
-    provider: "unipile",
+  const values = {
     config,
     secret: acc.id,
-    webhook_secret: prev?.webhook_secret || randomHex,
     status: accountUsable(acc.status) ? "connected" : "error",
     last_error: accountUsable(acc.status) ? null : humanStatus(acc.status),
-  }, { onConflict: "user_id,provider" }).select("*").single();
-  if (error) throw new Error("No se pudo guardar la cuenta de LinkedIn: " + error.message);
+  };
+  if (prev) {
+    const { data, error } = await db.from("channel_accounts").update(values).eq("id", prev.id).select("*").single();
+    if (error) throw new Error("No se pudo guardar la cuenta de LinkedIn: " + error.message);
+    return data;
+  }
+  const max = maxAccounts();
+  if (activeCount(rows) >= max) throw new LinkedinAccountLimitError(max);
+  const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const { data, error } = await db.from("channel_accounts")
+    .insert({ user_id: userId, provider: "unipile", webhook_secret: randomHex, ...values }).select("*").single();
+  if (error) {
+    // Dos avisos de la misma cuenta a la vez: la otra ejecución ya la guardó.
+    const { data: again } = await db.from("channel_accounts").select("*").eq("user_id", userId).eq("provider", "unipile").eq("secret", acc.id).limit(1);
+    if (again?.length) return again[0];
+    if (/duplicate key|channel_accounts_user_provider/i.test(error.message)) {
+      throw new Error("Todavía no se puede agregar una segunda cuenta de LinkedIn: falta aplicar una actualización de la base de datos.");
+    }
+    throw new Error("No se pudo guardar la cuenta de LinkedIn: " + error.message);
+  }
   return data;
 }
 
@@ -532,6 +565,13 @@ export async function findAccountByName(env: UnipileEnv, name: string, identity:
   const data = await call(env, "GET", "/accounts?limit=250");
   const items: Json[] = Array.isArray(data?.items) ? data.items : [];
   return pickAccountByName(items, name) ?? pickAccountByIdentity(items, identity);
+}
+
+/** Todas las cuentas de LinkedIn de la plataforma (para reconocer las de un usuario). */
+export async function listLinkedinAccounts(env: UnipileEnv): Promise<{ items: Json[]; accounts: UnipileAccount[] }> {
+  const data = await call(env, "GET", "/accounts?limit=250");
+  const items: Json[] = (Array.isArray(data?.items) ? data.items : []).filter((a: Json) => String(a?.type ?? "").toUpperCase() === "LINKEDIN");
+  return { items, accounts: items.map(toAccount) };
 }
 
 /** Quién es en LinkedIn la cuenta que el usuario ya conectó (queda en config al desconectar). */

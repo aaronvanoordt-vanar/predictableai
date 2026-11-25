@@ -140,6 +140,25 @@
     return f ? f.label : String(v || '').replace(/_/g, ' ');
   }
   function hasPhone(m) { return String((m && m.phone) || '').replace(/\D/g, '').length >= 8; }
+  /**
+   * Cuenta de LinkedIn con la que el motor contactó al lead
+   * (provider_refs.unipile_account_id). Lo contactado antes de que existieran
+   * varias cuentas no la trae: fue la principal (la primera de opts.linkedinAccounts).
+   */
+  function linkedinAccounts() { return (state.opts && state.opts.linkedinAccounts) || []; }
+  function linkedinAccountOf(e) {
+    var r = (e && e.provider_refs) || {};
+    if (r.unipile_account_id) return String(r.unipile_account_id);
+    if (!r.unipile_provider_id) return '__none';
+    var main = linkedinAccounts()[0];
+    return main ? String(main.id) : '__main';
+  }
+  function linkedinAccountLabel(v) {
+    if (v === '__none') return 'Sin envío desde LinkedIn';
+    if (v === '__main') return 'Cuenta principal';
+    var a = linkedinAccounts().filter(function (x) { return String(x.id) === String(v); })[0];
+    return a ? a.name : 'Cuenta desconectada';
+  }
   // Filtros de selección sobre el enrolamiento y su lead. Con `get`, el valor
   // del lead se compara con el elegido; con `options` + `test`, cada opción es
   // una condición (datos de contacto, favoritos).
@@ -156,6 +175,11 @@
     { key: 'enroll', label: 'Estado en la campaña', all: 'Todos los estados',
       get: enrollStatus,
       labelOf: function (v) { return ENROLL_LABELS[v] || v; } },
+    // Cuenta de LinkedIn propia que contactó al lead (prueba A/B entre cuentas):
+    // solo aparece si los leads cargados salieron por más de una.
+    { key: 'liacc', label: 'Cuenta de LinkedIn', all: 'Todas las cuentas',
+      get: linkedinAccountOf,
+      labelOf: linkedinAccountLabel },
     { key: 'contact', label: 'Datos de contacto', all: 'Cualquiera',
       options: [
         { value: 'email', label: 'Con email', test: function (m) { return !!realEmail(m); } },
@@ -398,7 +422,7 @@
   function fetchEnrollments(part, cols) {
     return fetchAll(function () {
       return sb().from('campaign_enrollments')
-        .select('id, campaign_id, status, replied_at, replied_channel, created_at, prospect_list_members(' + cols + ')')
+        .select('id, campaign_id, status, replied_at, replied_channel, created_at, provider_refs, prospect_list_members(' + cols + ')')
         .in('campaign_id', part)
         .order('created_at', { ascending: true })
         .order('id', { ascending: true });

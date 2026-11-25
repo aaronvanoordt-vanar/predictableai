@@ -25,6 +25,7 @@
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.117.1";
 import * as guard from "../_shared/channel-guard.ts";
 import * as liLimits from "../_shared/linkedin-limits.ts";
+import * as liAccounts from "../_shared/linkedin-accounts.ts";
 import { effectiveLimit, clampLimit } from "../_shared/mailbox-rotation.ts";
 import * as meta from "../_shared/meta-whatsapp.ts";
 import * as net from "../_shared/warmup-network.ts";
@@ -93,26 +94,28 @@ async function whatsappStatus(db: SupabaseClient, userId: string, accounts: Json
 }
 
 async function linkedinStatus(db: SupabaseClient, userId: string, accounts: Json[], now: Date): Promise<Json> {
-  const acc = accounts.find((a) => a.provider === "unipile" && a.status !== "disconnected");
-  if (!acc) {
+  // Un usuario puede tener varias cuentas de LinkedIn (2026-11-25): cada una
+  // con sus topes y su rampa. La primera (la principal) se repite arriba para
+  // quien solo lee una; `accounts` las trae todas.
+  const rows = liAccounts.sortAccounts(accounts.filter((a) => a.provider === "unipile"));
+  const live = rows.filter((a) => a.status !== "disconnected");
+  if (!live.length) {
     const drip = accounts.find((a) => a.provider === "dripify" && a.status === "connected");
     if (drip) return { channel: "linkedin", connected: true, provider: "dripify", label: "Dripify", external: "El ritmo y los topes de LinkedIn los decide Dripify (Activity Control): Predictable no los controla." };
     return { channel: "linkedin", connected: false };
   }
-  const d1 = new Date(now.getTime() - DAY).toISOString(), d7 = new Date(now.getTime() - 7 * DAY).toISOString();
-  const base = () => db.from("campaign_events").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("channel", "linkedin").eq("payload->>via", "unipile");
-  const [invDay, invWeek, msgDay] = await Promise.all([
-    count(base().eq("type", "connection_sent").gte("created_at", d1)),
-    count(base().eq("type", "connection_sent").gte("created_at", d7)),
-    count(base().eq("type", "sent").gte("created_at", d1)),
-  ]);
-  const limits = liLimits.effectiveLimits(acc.config, acc.config?.connected_at, now);
-  const block = acc.status === "connected" ? liLimits.activeBlock(acc.config, now) : { reason: acc.last_error || "La cuenta de LinkedIn necesita reconectarse.", until: null };
-  const v = guard.linkedinVerdict(acc.config, limits, { invitesDay: invDay, invitesWeek: invWeek, messagesDay: msgDay }, now, block);
-  return {
-    channel: "linkedin", connected: true, account_id: acc.id, provider: "unipile", label: acc.config?.name || "LinkedIn", verdict: v,
-    today: { invites: { used: invDay, cap: limits.invitesPerDay }, messages: { used: msgDay, cap: limits.messagesPerDay }, week: { used: invWeek, cap: limits.invitesPerWeek } },
+  const one = async (acc: Json): Promise<Json> => {
+    const sent = await liAccounts.sendCounts(db, userId, acc, rows, now);
+    const limits = liLimits.effectiveLimits(acc.config, acc.config?.connected_at, now);
+    const block = acc.status === "connected" ? liLimits.activeBlock(acc.config, now) : { reason: acc.last_error || "La cuenta de LinkedIn necesita reconectarse.", until: null };
+    const v = guard.linkedinVerdict(acc.config, limits, { invitesDay: sent.invitesDay, invitesWeek: sent.invitesWeek, messagesDay: sent.messagesDay }, now, block);
+    return {
+      channel: "linkedin", connected: true, account_id: acc.id, provider: "unipile", label: acc.config?.name || "LinkedIn", verdict: v,
+      today: { invites: { used: sent.invitesDay, cap: limits.invitesPerDay }, messages: { used: sent.messagesDay, cap: limits.messagesPerDay }, week: { used: sent.invitesWeek, cap: limits.invitesPerWeek } },
+    };
   };
+  const all = await Promise.all(live.map(one));
+  return { ...all[0], accounts: all };
 }
 
 async function emailStatus(db: SupabaseClient, userId: string, accounts: Json[], now: Date, team: boolean): Promise<Json> {
@@ -293,7 +296,8 @@ Deno.serve(async (req) => {
       }
       const { data: accs } = await db.from("channel_accounts").select("*").eq("user_id", userId);
       const acc = channel === "whatsapp" ? whatsapp.pickWhatsAppAccount((accs ?? []) as Json[])
-        : channel === "linkedin" ? ((accs ?? []) as Json[]).find((a) => a.provider === "unipile") : null;
+        : channel === "linkedin" ? liAccounts.sortAccounts(((accs ?? []) as Json[]).filter((a) => a.provider === "unipile" && a.status !== "disconnected"))
+          .find((a) => !body?.account_id || String(a.id) === String(body.account_id)) : null;
       if (!acc) return json({ error: "Ese canal no está conectado." }, 404);
       await net.patchGuard(db, acc, on
         ? { override_at: now.toISOString(), override_by: userId }
